@@ -1,0 +1,153 @@
+import { traceable } from 'langsmith/traceable'
+import type { LLM } from '@/lib/agents/llm'
+import type { Evidence, ExtractedClaim, SearchResult } from '@/lib/types'
+import { searchTavily } from '@/lib/retrieval/tavily'
+import { searchWikipedia } from '@/lib/retrieval/wikipedia'
+import { searchPolitifact } from '@/lib/retrieval/politifact'
+import { compressDocument } from '@/lib/retrieval/compress'
+import { classifyNli } from '@/lib/nlp/nli'
+import { reformulateQuery } from '@/lib/nlp/query-reformulator'
+
+export interface VerificationProgress {
+  onIteration?: (query: string, iteration: number) => void
+}
+
+interface GatheredResult {
+  title: string
+  url: string
+  source: string
+  content: string
+  score: number
+}
+
+function tagSource(url: string, fallback: string): string {
+  if (!url) return fallback
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '')
+    return host
+  } catch {
+    return fallback
+  }
+}
+
+async function gatherParallel(query: string): Promise<GatheredResult[]> {
+  const [tav, wiki, poli] = await Promise.all([
+    searchTavily(query, 5).catch(() => [] as SearchResult[]),
+    searchWikipedia(query).catch(() => null),
+    searchPolitifact(query).catch(() => [] as SearchResult[]),
+  ])
+  const out: GatheredResult[] = []
+  for (const r of tav) {
+    if (!r.content) continue
+    out.push({
+      title: r.title,
+      url: r.url,
+      source: tagSource(r.url, 'Web'),
+      content: r.content,
+      score: r.score,
+    })
+  }
+  if (wiki) {
+    out.push({
+      title: wiki.title,
+      url: wiki.url,
+      source: 'Wikipedia',
+      content: wiki.content,
+      score: wiki.score,
+    })
+  }
+  for (const r of poli) {
+    out.push({
+      title: r.title,
+      url: r.url,
+      source: 'PolitiFact',
+      content: r.content,
+      score: r.score,
+    })
+  }
+  return out.slice(0, 7)
+}
+
+/**
+ * Credibility-weighted sufficiency.
+ *
+ * The NLI rubric in `lib/nlp/nli.ts` scores government / academic primary
+ * sources at >=90, reputable news / fact-checking at 70-89, general news at
+ * 50-69, low-quality at <50. We sum credibility on each side and stop when:
+ *  - the dominant side reaches a meaningful aggregate (>= 120, roughly two
+ *    mid-tier news sources or one primary), AND outweighs the other side by
+ *    >= 40 (one mid-tier news source of clear margin), OR
+ *  - any single source on either side has credibility >= 90 (primary
+ *    government / academic source — definitive on its own).
+ */
+function isSufficient(evidence: Evidence[]): boolean {
+  let supportScore = 0
+  let contradictScore = 0
+  let maxSingleSupport = 0
+  let maxSingleContradict = 0
+  for (const e of evidence) {
+    if (e.stance === 'SUPPORTS') {
+      supportScore += e.credibilityScore
+      if (e.credibilityScore > maxSingleSupport) maxSingleSupport = e.credibilityScore
+    } else if (e.stance === 'CONTRADICTS') {
+      contradictScore += e.credibilityScore
+      if (e.credibilityScore > maxSingleContradict) maxSingleContradict = e.credibilityScore
+    }
+  }
+  if (maxSingleSupport >= 90 || maxSingleContradict >= 90) return true
+  const dominant = Math.max(supportScore, contradictScore)
+  const margin = Math.abs(supportScore - contradictScore)
+  return dominant >= 120 && margin >= 40
+}
+
+// Hard cap on NLI / compression calls per claim. Once we have scored this many
+// unique documents we stop scoring more even if subsequent iterations gather
+// extra hits — the ReAct loop can still iterate for sufficiency re-checks but
+// it cannot pull additional documents through NLI.
+const MAX_DOCS_PER_CLAIM = 6
+
+async function runReActVerificationImpl(
+  claim: ExtractedClaim,
+  model: LLM,
+  maxIterations = 3,
+  progress?: VerificationProgress,
+): Promise<{ evidence: Evidence[]; queries: string[]; iterations: number }> {
+  const evidence: Evidence[] = []
+  const queries: string[] = []
+  let query = claim.searchQuery || claim.claimText
+  let iteration = 0
+
+  while (iteration < maxIterations) {
+    if (iteration > 0) {
+      query = await reformulateQuery(claim.claimText, evidence, model)
+    }
+    queries.push(query)
+    progress?.onIteration?.(query, iteration + 1)
+
+    const gathered = await gatherParallel(query)
+    for (const g of gathered) {
+      if (evidence.length >= MAX_DOCS_PER_CLAIM) break
+      const already = evidence.find((e) => e.url === g.url)
+      if (already) continue
+      const compressed = await compressDocument(g.content, claim.claimText, model)
+      const nli = await classifyNli(claim.claimText, compressed, g.url, model)
+      evidence.push({
+        source: g.source,
+        url: g.url,
+        excerpt: compressed,
+        stance: nli.stance,
+        credibilityScore: nli.credibilityScore,
+      })
+    }
+
+    iteration += 1
+    if (isSufficient(evidence)) break
+  }
+
+  return { evidence, queries, iterations: iteration }
+}
+
+export const runReActVerification = traceable(runReActVerificationImpl, {
+  name: 'veritas:react-verification',
+  project_name: 'veritas',
+})
