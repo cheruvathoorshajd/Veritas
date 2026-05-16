@@ -267,7 +267,7 @@ The system queries **three sources in parallel** for each claim:
 
 Reduces retrieved documents to claim-relevant summaries:
 
-- **Short-circuit**: Documents under 220 words are returned as-is
+- **Short-circuit**: Documents under 500 words are returned as-is
 - **LLM compression**: Prompts Gemini to summarize to 200–300 words, keeping only claim-relevant information (max 8000 chars input)
 - **Heuristic fallback**: When LLM unavailable:
   - Splits document into sentences
@@ -374,6 +374,8 @@ The client reads SSE via `ReadableStream.getReader()`, buffering chunks on `\n\n
 | POST   | `/api/session/[id]/approval`     | Persist verdict approval decision               | —          |
 | GET    | `/api/session/[id]/report`       | HTML report (printable to PDF)                  | —          |
 | GET    | `/api/health`                    | Health check (Gemini, Tavily, AssemblyAI, Supabase) | —      |
+
+> `/api/health` invokes the real upstream APIs (Gemini, Tavily, AssemblyAI, Supabase) on every call — each healthcheck spends quota and round-trip latency. If you wire it into a heartbeat / uptime monitor, cache externally rather than polling it frequently.
 
 ### Pipeline Route Details (`/api/pipeline`)
 
@@ -516,6 +518,7 @@ pnpm start
 - **Vercel function timeout (60s).** `/api/pipeline` is configured with `maxDuration = 60`, which is a hard ceiling on Vercel's free / Hobby tier. With Gemini-only LLM calls and the per-claim cap of 6 retrieved docs, expect a practical capacity of **~6 claims per pipeline run** before the function times out. Transcripts that yield more than that many checkworthy lines should be split or trimmed client-side; otherwise later claims will be cut off mid-stream.
 - **In-memory rate limit and session store are per-instance.** The sliding-window limiter (`lib/utils/rate-limit.ts`) and the in-memory `Map` fallback in `lib/db/sessions.ts` live inside one serverless function process. Vercel scales horizontally, so a request that hits a different instance will see no prior state — the limiter under-counts and `getSession` returns null on the wrong instance. For live deployments, configure Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`). Without it, the approval flow and the `/api/session/[id]/report` export are unreliable across instances.
 - **Env requirements differ by mode.** Demo mode (`runDemo` in `AppShell.tsx`) is fully offline and needs zero env vars. The live pipeline requires at minimum `GOOGLE_GENERATIVE_AI_API_KEY` and `TAVILY_API_KEY`. `GROQ_API_KEY` enables automatic fallback when the Gemini free-tier quota is exhausted. `ASSEMBLYAI_API_KEY` is required for file-upload transcription. Supabase keys + LangSmith are optional but recommended in production.
+- **Approval flow requires Supabase in production.** Without it, approval POSTs may return 404 when they hit a different serverless instance than the one that owns the in-memory session. Configure Supabase, or run on a single long-lived process.
 
 ## Deploying to Vercel
 
