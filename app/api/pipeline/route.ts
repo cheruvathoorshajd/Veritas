@@ -111,6 +111,13 @@ async function runPipeline(
       case 'complete':
         send({ type: 'complete', sessionId })
         break
+      case 'error':
+        // Per-claim failure surfaced from inside the graph. The graph keeps
+        // running and emits a placeholder UNVERIFIED verdict for the claim,
+        // so we log for observability but do NOT forward as a terminal SSE
+        // error event (that would stop the UI mid-run).
+        console.warn('[pipeline] graph error:', event.message)
+        break
       default:
         break
     }

@@ -27,6 +27,7 @@ export type GraphEvent =
     }
   | { type: 'speaker_update'; speaker: Speaker }
   | { type: 'complete' }
+  | { type: 'error'; message: string }
 
 export type GraphEventEmitter = (event: GraphEvent) => void
 
@@ -64,17 +65,61 @@ export const VeritasState = Annotation.Root({
 
 export type VeritasStateType = typeof VeritasState.State
 
+function syntheticVerdictId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // Deterministic enough for the synthetic-verdict path in environments
+  // without WebCrypto; never collides with real verdict IDs in practice.
+  return `verdict-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 async function extractNode(state: VeritasStateType): Promise<Partial<VeritasStateType>> {
   state.onEvent({ type: 'stage', stage: 'extract' })
-  const newClaims = await extractClaims(state.transcriptLines, state.model)
-  for (const c of newClaims) state.onEvent({ type: 'claim_detected', claim: c })
-  return { claims: newClaims, currentClaimIndex: 0, stage: 'extract' as PipelineStage }
+  try {
+    const newClaims = await extractClaims(state.transcriptLines, state.model)
+    for (const c of newClaims) state.onEvent({ type: 'claim_detected', claim: c })
+    return { claims: newClaims, currentClaimIndex: 0, stage: 'extract' as PipelineStage }
+  } catch (err) {
+    state.onEvent({ type: 'error', message: `extract_failed: ${(err as Error).message}` })
+    // claims: [] routes via routeAfterExtract → generate_report, so the run
+    // ends cleanly instead of crashing the whole graph.
+    return { claims: [], stage: 'verify' as PipelineStage }
+  }
 }
 
 async function verifyNode(state: VeritasStateType): Promise<Partial<VeritasStateType>> {
   state.onEvent({ type: 'stage', stage: 'verify' })
-  const claim = state.claims[state.currentClaimIndex]
-  if (!claim) {
+  try {
+    const claim = state.claims[state.currentClaimIndex]
+    if (!claim) {
+      // Routing guarantees a claim exists here; if it ever doesn't, the
+      // safe fallback (returning empty deltas) would loop forever because
+      // currentClaimIndex never advances. Fail loudly instead — the outer
+      // try/catch turns this into a per-claim error, not a pipeline crash.
+      throw new Error(
+        `verifyNode invoked with no claim at index ${state.currentClaimIndex}`,
+      )
+    }
+    const { evidence, queries, iterations } = await runReActVerification(
+      claim,
+      state.model,
+      3,
+      {
+        onIteration: (query, iteration) =>
+          state.onEvent({ type: 'verifying', claimId: claim.id, query, iteration }),
+      },
+    )
+    return {
+      searchResults: evidence,
+      iterationCount: iterations,
+      currentClaimQueries: queries,
+      stage: 'verify' as PipelineStage,
+    }
+  } catch (err) {
+    state.onEvent({ type: 'error', message: `verify_failed: ${(err as Error).message}` })
+    // Reset per-claim state so verdictNode hits the empty-evidence
+    // short-circuit and emits an UNVERIFIED verdict (~10% confidence).
     return {
       searchResults: [],
       iterationCount: 0,
@@ -82,44 +127,59 @@ async function verifyNode(state: VeritasStateType): Promise<Partial<VeritasState
       stage: 'verify' as PipelineStage,
     }
   }
-  const { evidence, queries, iterations } = await runReActVerification(
-    claim,
-    state.model,
-    3,
-    {
-      onIteration: (query, iteration) =>
-        state.onEvent({ type: 'verifying', claimId: claim.id, query, iteration }),
-    },
-  )
-  return {
-    searchResults: evidence,
-    iterationCount: iterations,
-    currentClaimQueries: queries,
-    stage: 'verify' as PipelineStage,
-  }
 }
 
 async function verdictNode(state: VeritasStateType): Promise<Partial<VeritasStateType>> {
   state.onEvent({ type: 'stage', stage: 'verdict' })
   const claim = state.claims[state.currentClaimIndex]
   if (!claim) return { stage: 'verdict' as PipelineStage }
-  const verdict = await synthesiseVerdict(
-    claim,
-    state.searchResults,
-    state.model,
-    state.currentClaimQueries,
-    state.iterationCount,
-  )
-  state.onEvent({ type: 'verdict', verdict })
-  if (verdict.approvalRequired) {
+  try {
+    const verdict = await synthesiseVerdict(
+      claim,
+      state.searchResults,
+      state.model,
+      state.currentClaimQueries,
+      state.iterationCount,
+    )
+    state.onEvent({ type: 'verdict', verdict })
+    if (verdict.approvalRequired) {
+      state.onEvent({
+        type: 'approval_required',
+        verdictId: verdict.id,
+        claimText: verdict.claimText,
+        confidencePct: verdict.confidencePct,
+      })
+    }
+    return { verdicts: [verdict], stage: 'verdict' as PipelineStage }
+  } catch (err) {
+    state.onEvent({ type: 'error', message: `verdict_failed: ${(err as Error).message}` })
+    // Synthesise a placeholder UNVERIFIED verdict so the claim still appears
+    // in the UI with the original attribution. approvalRequired forces it
+    // into the human-review band rather than silently dropping the claim.
+    const synthetic: Verdict = {
+      id: syntheticVerdictId(),
+      claimId: claim.id,
+      speaker: claim.speaker,
+      timestamp: claim.timestamp,
+      claimText: claim.claimText,
+      label: 'UNVERIFIED',
+      confidencePct: 0,
+      explanation: 'Verdict synthesis failed; treating as unverified.',
+      evidence: [],
+      searchQueries: state.currentClaimQueries,
+      iterationsUsed: state.iterationCount,
+      approvalRequired: true,
+      approved: null,
+    }
+    state.onEvent({ type: 'verdict', verdict: synthetic })
     state.onEvent({
       type: 'approval_required',
-      verdictId: verdict.id,
-      claimText: verdict.claimText,
-      confidencePct: verdict.confidencePct,
+      verdictId: synthetic.id,
+      claimText: synthetic.claimText,
+      confidencePct: synthetic.confidencePct,
     })
+    return { verdicts: [synthetic], stage: 'verdict' as PipelineStage }
   }
-  return { verdicts: [verdict], stage: 'verdict' as PipelineStage }
 }
 
 async function nextClaimNode(state: VeritasStateType): Promise<Partial<VeritasStateType>> {
