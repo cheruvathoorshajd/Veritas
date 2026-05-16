@@ -125,6 +125,11 @@ async function runReActVerificationImpl(
     progress?.onIteration?.(query, iteration + 1)
 
     const gathered = await gatherParallel(query)
+    // Two-level early termination: the inner break stops scoring further
+    // docs from this iteration once sufficiency is met, the outer break
+    // (after iteration++) skips the next ReAct iteration entirely. Either
+    // alone is insufficient — the inner saves compress+NLI on docs 2..n of
+    // the current iteration; the outer saves the next gather+reformulate.
     for (const g of gathered) {
       if (evidence.length >= MAX_DOCS_PER_CLAIM) break
       const already = evidence.find((e) => e.url === g.url)
@@ -138,6 +143,7 @@ async function runReActVerificationImpl(
         stance: nli.stance,
         credibilityScore: nli.credibilityScore,
       })
+      if (isSufficient(evidence)) break
     }
 
     iteration += 1
@@ -146,6 +152,16 @@ async function runReActVerificationImpl(
 
   return { evidence, queries, iterations: iteration }
 }
+
+// Expected behaviour after the inner-loop sufficiency check:
+//  - A single .gov source returned in iteration 1 with credibility 95 and
+//    stance SUPPORTS will trip `isSufficient` (maxSingleSupport >= 90)
+//    immediately after the first push. The inner loop breaks, so docs 2..n
+//    of iteration 1 are never compressed or NLI-classified. The outer
+//    sufficiency check then short-circuits and iteration 2 never runs.
+//  - `MAX_DOCS_PER_CLAIM` (6) still caps the worst case where no source is
+//    individually decisive — the new check is an additional early
+//    termination, not a replacement.
 
 export const runReActVerification = traceable(runReActVerificationImpl, {
   name: 'veritas:react-verification',
