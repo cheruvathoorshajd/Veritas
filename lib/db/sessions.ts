@@ -49,6 +49,17 @@ function rowToSession(row: SessionRow): Session {
   }
 }
 
+/**
+ * True when no Supabase env vars are set, so reads/writes go to the per-process
+ * `memoryStore`. Callers (e.g. the approval route) use this to distinguish
+ * "session genuinely missing" (real bug, return 404) from "session lives on a
+ * different serverless instance" (return a no-op success so the UI keeps
+ * its optimistic state).
+ */
+export function isMemoryMode(): boolean {
+  return !isSupabaseConfigured()
+}
+
 // In-memory fallback when Supabase isn't configured (dev / demo)
 const memoryStore = new Map<string, Session>()
 

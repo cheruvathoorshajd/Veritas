@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server'
-import { setVerdictApproval, SessionNotFoundError, SessionStorageError } from '@/lib/db/sessions'
+import {
+  setVerdictApproval,
+  SessionNotFoundError,
+  SessionStorageError,
+  isMemoryMode,
+} from '@/lib/db/sessions'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -29,9 +34,21 @@ export async function POST(
 
   try {
     const verdict = await setVerdictApproval(params.id, body.verdictId, body.approved)
-    return NextResponse.json({ ok: true, verdict })
+    return NextResponse.json({ ok: true, verdict, persisted: true })
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
+      // Without Supabase, sessions live in a per-instance Map. A POST that
+      // lands on a different serverless instance than the one that owns
+      // the session will look up an empty Map and miss — that's not a
+      // bug, it's an architectural fact of running stateless on Vercel.
+      // Signal "client-only acceptance" so the UI keeps its optimistic
+      // state and surfaces an advisory rather than a hard error.
+      if (isMemoryMode()) {
+        return NextResponse.json(
+          { ok: true, verdict: null, persisted: false },
+          { status: 200, headers: { 'X-Veritas-Approval': 'client-only' } },
+        )
+      }
       return NextResponse.json({ error: err.message }, { status: 404 })
     }
     if (err instanceof SessionStorageError) {

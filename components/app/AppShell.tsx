@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ExtractedClaim,
   InputMode,
@@ -32,7 +32,14 @@ export function AppShell() {
   const [verdicts, setVerdicts] = useState<Verdict[]>([])
   const [speakers, setSpeakers] = useState<Speaker[]>([])
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [advisoryMsg, setAdvisoryMsg] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+
+  useEffect(() => {
+    if (!advisoryMsg) return
+    const t = setTimeout(() => setAdvisoryMsg(null), 4000)
+    return () => clearTimeout(t)
+  }, [advisoryMsg])
   const abortRef = useRef<AbortController | null>(null)
   const demoAbortRef = useRef<{ aborted: boolean } | null>(null)
 
@@ -75,6 +82,16 @@ export function AppShell() {
             body: JSON.stringify({ verdictId, approved }),
           })
           if (!res.ok) throw new Error(`approval failed: ${res.status}`)
+          // When running without Supabase the route returns 200 with
+          // persisted: false (the session lives in an in-memory Map on a
+          // possibly-different instance). Keep the optimistic state, just
+          // surface a short advisory so the user knows it won't survive.
+          const payload = (await res.json().catch(() => null)) as
+            | { ok?: boolean; persisted?: boolean }
+            | null
+          if (payload && payload.persisted === false) {
+            setAdvisoryMsg('Approval recorded locally (Supabase not configured)')
+          }
         } catch (err) {
           // Roll back optimistic update on failure
           setVerdicts((prev) =>
@@ -324,6 +341,21 @@ export function AppShell() {
             }}
           >
             {errorMsg}
+          </div>
+        )}
+
+        {advisoryMsg && (
+          <div
+            style={{
+              padding: '10px 14px',
+              border: '1px solid var(--amber)',
+              background: 'var(--amber-dim)',
+              color: 'var(--amber)',
+              fontSize: 15,
+              marginBottom: 24,
+            }}
+          >
+            {advisoryMsg}
           </div>
         )}
 
