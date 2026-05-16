@@ -233,6 +233,7 @@ export interface RunVeritasOptions {
   inputMode: InputMode
   model: LLM
   onEvent: GraphEventEmitter
+  signal?: AbortSignal
 }
 
 export async function runVeritasPipeline(options: RunVeritasOptions): Promise<void> {
@@ -242,10 +243,17 @@ export async function runVeritasPipeline(options: RunVeritasOptions): Promise<vo
     model: options.model,
     onEvent: options.onEvent,
   }
-  const stream = await veritasGraph.stream(initial)
-  // Drain the stream. Granular events are emitted from inside the nodes via
-  // `state.onEvent`; the per-node state deltas yielded here are not needed.
+  // PregelOptions extends RunnableConfig which carries `signal`; LangGraph
+  // propagates it through tool/LLM calls so retrieval and Gemini invocations
+  // honour the abort. The chunk-level check below catches runtimes where the
+  // signal isn't honoured natively — we still stop draining at the next
+  // node boundary.
+  const stream = await veritasGraph.stream(
+    initial,
+    options.signal ? { signal: options.signal } : undefined,
+  )
   for await (const _chunk of stream) {
     void _chunk
+    if (options.signal?.aborted) break
   }
 }

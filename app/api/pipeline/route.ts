@@ -129,6 +129,7 @@ async function runPipeline(
       inputMode,
       model,
       onEvent,
+      signal,
     })
   } catch (err) {
     const message = (err as Error).message || 'Pipeline crashed'
