@@ -530,6 +530,44 @@ pnpm start
 
 ---
 
+## Evaluation Results
+
+The repo ships a 30-claim hand-labelled eval set under `eval/claims.jsonl`. Each line is `{id, claim, expected, category, rationale}` with `expected ∈ {VERIFIED, FALSE, MISLEADING, UNVERIFIED}`. The labels are roughly balanced (8 VERIFIED, 8 FALSE, 7 MISLEADING, 7 UNVERIFIED). The UNVERIFIED slice deliberately includes five claims engineered so retrieval should return nothing useful (made-up people, fake studies, hyper-specific local statistics) — that subset measures whether the system correctly admits ignorance instead of confabulating a verdict.
+
+Run `pnpm eval` to reproduce. The harness (`eval/run.ts`) calls `runVeritasPipeline` directly against the real Gemini, Tavily, Wikipedia, and PolitiFact endpoints — no mocks — so reproducibility depends on the upstream state at the time of the run. Results are written to `eval/results.json` (gitignored, regenerated each run). `GOOGLE_GENERATIVE_AI_API_KEY` and `TAVILY_API_KEY` must be set; the script exits 1 with a pointer to `.env.example` otherwise. `GROQ_API_KEY` is recommended for fallback under Gemini quota pressure.
+
+### Latest run
+
+The committed numbers below are pending: this branch ships the harness but no API keys were available in the environment where the cleanup pass was performed. To populate this section, run:
+
+```bash
+pnpm eval | tee eval/last-report.txt
+```
+
+Then paste the confusion-matrix and per-label-metrics blocks below. See `BLOCKERS.md` for context.
+
+```
+=== Confusion matrix (rows = expected, cols = predicted) ===
+(pending — run `pnpm eval`)
+
+=== Per-label metrics ===
+(pending — run `pnpm eval`)
+
+=== Aggregate ===
+(pending — run `pnpm eval`)
+```
+
+### Expected behaviour (qualitative)
+
+Based on the credibility rubric in `lib/nlp/credibility.ts` and the heuristic in `lib/agents/verdict.ts`:
+
+- **Strongest on VERIFIED:** numeric / geographic / scientific claims that match `.gov`, `.edu`, or major news domains in the credibility table (e.g. Eiffel Tower location, gold's chemical symbol). These trip the `maxSingleSupport >= 90` sufficiency check on the first iteration.
+- **Strongest on FALSE:** claims directly contradicted by a primary source (Sun-revolves-around-Earth, chromosome count). The `heuristicVerdict` weighted-margin path resolves these confidently.
+- **Weakest on the FALSE/MISLEADING boundary:** "Sugar causes hyperactivity," "We use 10% of our brain" — popular myths whose contradictions live in mid-tier news/health sources (credibility 70-89). The verdict can land in either bucket depending on which side retrieval surfaces first.
+- **UNVERIFIED is the strictest test:** for the five fabricated claims, the system should retrieve nothing useful and emit an UNVERIFIED verdict near 10-20% confidence via the empty-evidence short-circuit in `verdict.ts`. False positives here (the system inventing a verdict for a fabricated entity) are the most serious failure mode for an ML-engineering portfolio piece.
+
+---
+
 ## Key Highlights for ML Engineers
 
 ### 1. Multi-Agent State Machine (LangGraph)
