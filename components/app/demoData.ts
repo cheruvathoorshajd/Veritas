@@ -213,7 +213,7 @@ export const DEMO_VERDICTS: Verdict[] = [
       },
       {
         source: 'JAMA Neurology',
-        url: 'https://nytimes.com',
+        url: 'https://jamanetwork.com/journals/jamaneurology/fullarticle/2774172',
         excerpt:
           'A 2022 review notes the protective effect is sex-dependent and substantially attenuated after controlling for smoking and reverse causation, calling the causal claim into question.',
         stance: 'CONTRADICTS',
