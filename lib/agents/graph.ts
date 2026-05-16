@@ -13,6 +13,7 @@ import { extractClaims } from './claim-extraction'
 import { runReActVerification } from './verification'
 import { synthesiseVerdict } from './verdict'
 import { generateReport } from './report'
+import { uuid } from '@/lib/utils/id'
 
 export type GraphEvent =
   | { type: 'stage'; stage: PipelineStage }
@@ -64,15 +65,6 @@ export const VeritasState = Annotation.Root({
 })
 
 export type VeritasStateType = typeof VeritasState.State
-
-function syntheticVerdictId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  // Deterministic enough for the synthetic-verdict path in environments
-  // without WebCrypto; never collides with real verdict IDs in practice.
-  return `verdict-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-}
 
 async function extractNode(state: VeritasStateType): Promise<Partial<VeritasStateType>> {
   state.onEvent({ type: 'stage', stage: 'extract' })
@@ -157,7 +149,7 @@ async function verdictNode(state: VeritasStateType): Promise<Partial<VeritasStat
     // in the UI with the original attribution. approvalRequired forces it
     // into the human-review band rather than silently dropping the claim.
     const synthetic: Verdict = {
-      id: syntheticVerdictId(),
+      id: uuid(),
       claimId: claim.id,
       speaker: claim.speaker,
       timestamp: claim.timestamp,

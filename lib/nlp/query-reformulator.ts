@@ -17,9 +17,21 @@ export async function reformulateQuery(
   model: LLM,
 ): Promise<string> {
   if (!previousEvidence.length) return claimText
-  const summaries = previousEvidence
+  // Score = |stance_sign| * credibilityScore. SUPPORTS/CONTRADICTS evidence
+  // counts at full credibility weight; NEUTRAL items score 0 so they only
+  // appear in the prompt when there's nothing else to show. Sort descending
+  // by score, then keep insertion order for ties so the reformulation prompt
+  // stays deterministic across retries. The earlier slice(0, 4) was anchored
+  // to first-seen evidence — after a few iterations the model kept seeing
+  // the same opening hits and produced near-identical query rewrites.
+  const stanceSign = (s: Evidence['stance']) =>
+    s === 'SUPPORTS' ? 1 : s === 'CONTRADICTS' ? -1 : 0
+  const ranked = previousEvidence
+    .map((e, i) => ({ e, i, score: Math.abs(stanceSign(e.stance)) * e.credibilityScore }))
+    .sort((a, b) => (b.score - a.score) || (a.i - b.i))
     .slice(0, 4)
-    .map((e, i) => `${i + 1}. [${e.stance}] ${e.source}: ${e.excerpt.slice(0, 300)}`)
+  const summaries = ranked
+    .map(({ e }, i) => `${i + 1}. [${e.stance}] ${e.source}: ${e.excerpt.slice(0, 300)}`)
     .join('\n')
   const prompt = `You refine web search queries for fact-checking.
 

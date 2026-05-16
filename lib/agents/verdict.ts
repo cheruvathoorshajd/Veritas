@@ -1,6 +1,8 @@
 import { traceable } from 'langsmith/traceable'
 import type { LLM } from '@/lib/agents/llm'
 import type { Evidence, ExtractedClaim, Verdict, VerdictLabel } from '@/lib/types'
+import { extractJsonObject } from '@/lib/utils/json'
+import { uuid } from '@/lib/utils/id'
 
 const SYSTEM_PROMPT = `You are a fact-checking verdict analyst. Given a claim and supporting evidence, produce a structured verdict.
 
@@ -24,19 +26,6 @@ Return JSON exactly:
 }
 No markdown. No preamble.`
 
-function uuid(): string {
-  const bytes = new Uint8Array(16)
-  if (typeof crypto !== 'undefined' && 'getRandomValues' in crypto) {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 function messageText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -51,12 +40,6 @@ function messageText(content: unknown): string {
       .join('\n')
   }
   return ''
-}
-
-function stripFence(raw: string): string {
-  let s = raw.trim()
-  if (s.startsWith('```')) s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
-  return s.trim()
 }
 
 /**
@@ -90,9 +73,17 @@ function heuristicVerdict(claim: ExtractedClaim, evidence: Evidence[]): {
   const credibleSupport = supports.find((e) => e.credibilityScore >= 60)
   const credibleContradict = contradicts.find((e) => e.credibilityScore >= 60)
   if (credibleSupport && credibleContradict) {
+    // Genuinely balanced cases sit at 55; the further one side outweighs the
+    // other (in credibility-weighted score), the more confidence drifts away
+    // from the centre. Clamped to [40, 70] so the verdict always lands in
+    // the human-review approval band — not a confident verified/false.
+    const conf = Math.max(
+      40,
+      Math.min(70, 55 - Math.min(margin / 4, 10)),
+    )
     return {
       label: 'MISLEADING',
-      confidencePct: 55,
+      confidencePct: Math.round(conf),
       explanation: `Mixed evidence: ${credibleSupport.source} supports parts of the claim while ${credibleContradict.source} contradicts it.`,
     }
   }
@@ -153,8 +144,12 @@ async function synthesiseVerdictImpl(
 
     try {
       const response = await model.invoke(prompt)
-      const raw = stripFence(messageText(response.content))
-      const obj = JSON.parse(raw)
+      const obj = extractJsonObject<{
+        label?: unknown
+        confidencePct?: unknown
+        explanation?: unknown
+      }>(messageText(response.content))
+      if (!obj) throw new Error('verdict JSON could not be parsed')
       if (obj.label === 'VERIFIED' || obj.label === 'FALSE' || obj.label === 'MISLEADING' || obj.label === 'UNVERIFIED') {
         label = obj.label
       }

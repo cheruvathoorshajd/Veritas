@@ -2,6 +2,8 @@ import { traceable } from 'langsmith/traceable'
 import type { LLM } from '@/lib/agents/llm'
 import type { ExtractedClaim, TranscriptLine } from '@/lib/types'
 import { isLikelyCheckworthy } from '@/lib/nlp/claim-detector'
+import { extractJsonArray } from '@/lib/utils/json'
+import { uuid } from '@/lib/utils/id'
 
 const SYSTEM_PROMPT = `You are a claim extraction specialist. Your job is to identify every verifiable factual claim in the provided transcript. A claim is checkworthy if it:
 - States a specific statistic, percentage, or number
@@ -28,19 +30,6 @@ For each claim return JSON:
 
 Return a JSON array. No markdown. No preamble.`
 
-function uuid(): string {
-  const bytes = new Uint8Array(16)
-  if (typeof crypto !== 'undefined' && 'getRandomValues' in crypto) {
-    crypto.getRandomValues(bytes)
-  } else {
-    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 function messageText(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
@@ -55,14 +44,6 @@ function messageText(content: unknown): string {
       .join('\n')
   }
   return ''
-}
-
-function stripFence(raw: string): string {
-  let s = raw.trim()
-  if (s.startsWith('```')) {
-    s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
-  }
-  return s.trim()
 }
 
 interface RawClaim {
@@ -103,29 +84,14 @@ async function extractClaimsImpl(
     return []
   }
 
-  const raw = stripFence(messageText(response.content))
-  if (!raw) return []
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    const match = raw.match(/\[[\s\S]*\]/)
-    if (!match) {
-      console.warn('[claim-extraction] could not parse JSON from model output')
-      return []
-    }
-    try {
-      parsed = JSON.parse(match[0])
-    } catch {
-      return []
-    }
+  const parsed = extractJsonArray<RawClaim>(messageText(response.content))
+  if (!parsed) {
+    console.warn('[claim-extraction] could not parse JSON array from model output')
+    return []
   }
 
-  if (!Array.isArray(parsed)) return []
-
   const claims: ExtractedClaim[] = []
-  for (const item of parsed as RawClaim[]) {
+  for (const item of parsed) {
     const text = (item.claimText ?? '').trim()
     if (!text) continue
     const raw = item.isCheckworthy

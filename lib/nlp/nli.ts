@@ -1,5 +1,6 @@
 import type { LLM } from '@/lib/agents/llm'
 import { domainCredibility } from './credibility'
+import { extractJsonObject } from '@/lib/utils/json'
 
 export type NliStance = 'SUPPORTS' | 'CONTRADICTS' | 'NEUTRAL'
 
@@ -45,12 +46,6 @@ function messageText(content: unknown): string {
       .join('\n')
   }
   return ''
-}
-
-function stripFence(raw: string): string {
-  let s = raw.trim()
-  if (s.startsWith('```')) s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
-  return s.trim()
 }
 
 // Negation words that, when appearing within 5 tokens BEFORE a matched claim
@@ -131,21 +126,23 @@ export async function classifyNli(
     const h = heuristic(claim, evidence)
     return prior === null ? h : { ...h, credibilityScore: prior }
   }
-  const raw = stripFence(messageText(response.content))
-  try {
-    const obj = JSON.parse(raw)
-    const stance: NliStance =
-      obj.stance === 'SUPPORTS' || obj.stance === 'CONTRADICTS' ? obj.stance : 'NEUTRAL'
-    const rationale = typeof obj.rationale === 'string' ? obj.rationale : ''
-    const credibilityScore =
-      prior !== null
-        ? prior
-        : typeof obj.credibilityScore === 'number'
-          ? Math.max(0, Math.min(100, Math.round(obj.credibilityScore)))
-          : 55
-    return { stance, credibilityScore, rationale }
-  } catch {
+  const obj = extractJsonObject<{
+    stance?: unknown
+    credibilityScore?: unknown
+    rationale?: unknown
+  }>(messageText(response.content))
+  if (!obj) {
     const h = heuristic(claim, evidence)
     return prior === null ? h : { ...h, credibilityScore: prior }
   }
+  const stance: NliStance =
+    obj.stance === 'SUPPORTS' || obj.stance === 'CONTRADICTS' ? obj.stance : 'NEUTRAL'
+  const rationale = typeof obj.rationale === 'string' ? obj.rationale : ''
+  const credibilityScore =
+    prior !== null
+      ? prior
+      : typeof obj.credibilityScore === 'number'
+        ? Math.max(0, Math.min(100, Math.round(obj.credibilityScore)))
+        : 55
+  return { stance, credibilityScore, rationale }
 }
