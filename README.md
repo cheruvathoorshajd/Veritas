@@ -864,6 +864,4 @@ The hard constraint was zero recurring spend. Everything runs on free tiers: Ass
 
 The full-screen trifold deck card chooser, the curtain transitions between routes (and same-route view changes), the per-card textures (waveform for mic, paper grain for doc, blinking caret for text), the coral/teal/amber semantic colour system, the monospace `(01)` section markers — every visible element is bespoke. There is no UI library in the dependency tree.
 
-### What CS50 problem-set work is *not* in here
 
-No `cash`-style table iteration, no `fiftyville` SQL puzzle, no `runoff` simulation. The closest course-level skills are basic JavaScript/React (CS50W finance project) and the SQL underneath Supabase — but everything from the LangGraph orchestration through the streaming pipeline through the multi-source RAG layer was new work for this submission.
