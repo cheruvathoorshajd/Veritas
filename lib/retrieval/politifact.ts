@@ -1,6 +1,8 @@
 import Parser from 'rss-parser'
 import type { SearchResult } from '@/lib/types'
+import { logger } from '@/lib/utils/logger'
 
+const log = logger('politifact')
 const FEED_URL = 'https://www.politifact.com/rss/rulings/'
 const CACHE_TTL_MS = 15 * 60 * 1000
 
@@ -22,6 +24,12 @@ const parser = new Parser({
   headers: { 'user-agent': 'veritas-fact-checker/1.0' },
 })
 
+let lastFeedError: string | null = null
+
+export function getLastPolitifactError(): string | null {
+  return lastFeedError
+}
+
 async function getFeed(): Promise<RawItem[]> {
   const cached = cache.get(FEED_URL)
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -36,9 +44,12 @@ async function getFeed(): Promise<RawItem[]> {
       isoDate: i.isoDate,
     }))
     cache.set(FEED_URL, { at: Date.now(), items })
+    lastFeedError = null
     return items
   } catch (err) {
-    console.warn('[politifact] feed fetch failed:', (err as Error).message)
+    const message = (err as Error).message || 'feed fetch failed'
+    lastFeedError = message
+    log.warn('feed fetch failed', { error: message })
     if (cached) return cached.items
     return []
   }

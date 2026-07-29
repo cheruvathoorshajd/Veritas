@@ -2,47 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TranscriptLine } from '@/lib/types'
-import { chunkToTranscriptLine } from '@/lib/transcription/web-speech'
+import { startMicStream } from '@/lib/transcription/mic-stream'
 
-// Web Speech API types (not in stock DOM lib)
-interface SRAlternative {
-  transcript: string
-  confidence: number
-}
-interface SRResult {
-  0: SRAlternative
-  isFinal: boolean
-  length: number
-}
-interface SREvent extends Event {
-  resultIndex: number
-  results: { length: number; [i: number]: SRResult }
-}
-interface SRErrorEvent extends Event {
-  error: string
-  message?: string
-}
-interface SRInstance {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  onresult: ((e: SREvent) => void) | null
-  onerror: ((e: SRErrorEvent) => void) | null
-  onend: (() => void) | null
-  onstart: (() => void) | null
-  start(): void
-  stop(): void
-}
-type SRCtor = new () => SRInstance
-
-function getSpeechRecognition(): SRCtor | null {
-  if (typeof window === 'undefined') return null
-  const w = window as unknown as {
-    SpeechRecognition?: SRCtor
-    webkitSpeechRecognition?: SRCtor
-  }
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
-}
+type StreamState = 'idle' | 'connecting' | 'live' | 'closing'
 
 export function MicInput({
   onLinesChanged,
@@ -51,132 +13,163 @@ export function MicInput({
   onLinesChanged: (lines: TranscriptLine[]) => void
   disabled?: boolean
 }) {
-  const [recording, setRecording] = useState(false)
+  const [state, setState] = useState<StreamState>('idle')
   const [interim, setInterim] = useState('')
-  const [supported, setSupported] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const recognitionRef = useRef<SRInstance | null>(null)
+  const [diarize, setDiarize] = useState(true)
   const linesRef = useRef<TranscriptLine[]>([])
-  const startAtRef = useRef<number>(0)
+  const activeRef = useRef<{ stop: () => Promise<void> } | null>(null)
+  const onLinesChangedRef = useRef(onLinesChanged)
 
   useEffect(() => {
-    const Ctor = getSpeechRecognition()
-    if (!Ctor) {
-      setSupported(false)
-      return
-    }
-    const rec = new Ctor()
-    rec.continuous = true
-    rec.interimResults = true
-    rec.lang = 'en-US'
-    rec.onresult = (e: SREvent) => {
-      let interimText = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i]
-        const text = res[0]?.transcript ?? ''
-        if (res.isFinal) {
-          const nowMs = Date.now() - startAtRef.current
-          const line = chunkToTranscriptLine(text.trim(), 'A', Math.max(0, nowMs - 2000))
-          if (line.text) {
-            linesRef.current = [...linesRef.current, line]
-            onLinesChanged(linesRef.current)
-          }
-        } else {
-          interimText += text
-        }
-      }
-      setInterim(interimText)
-    }
-    rec.onerror = (e) => {
-      setError(e.error || 'microphone error')
-    }
-    rec.onend = () => {
-      setRecording(false)
-      setInterim('')
-    }
-    recognitionRef.current = rec
-    return () => {
-      try {
-        rec.onresult = null
-        rec.onerror = null
-        rec.onend = null
-        rec.stop()
-      } catch {
-        // ignore
-      }
-    }
+    onLinesChangedRef.current = onLinesChanged
   }, [onLinesChanged])
 
-  const toggle = useCallback(() => {
-    const rec = recognitionRef.current
-    if (!rec || disabled) return
-    if (recording) {
-      try {
-        rec.stop()
-      } catch {
-        // ignore
-      }
-      setRecording(false)
-    } else {
-      setError(null)
-      linesRef.current = []
-      onLinesChanged([])
-      startAtRef.current = Date.now()
-      try {
-        rec.start()
-        setRecording(true)
-      } catch (err) {
-        setError((err as Error).message || 'failed to start')
-      }
+  useEffect(() => {
+    return () => {
+      const active = activeRef.current
+      activeRef.current = null
+      if (active) void active.stop()
     }
-  }, [recording, disabled, onLinesChanged])
+  }, [])
 
-  const label = !supported
-    ? 'UNSUPPORTED'
-    : recording
-      ? 'RECORDING'
-      : linesRef.current.length > 0
-        ? 'SESSION ENDED'
-        : 'STANDBY'
+  const start = useCallback(async () => {
+    if (disabled || state !== 'idle') return
+    setError(null)
+    linesRef.current = []
+    onLinesChangedRef.current([])
+    try {
+      const active = await startMicStream(
+        {
+          onLine: (line) => {
+            linesRef.current = [...linesRef.current, line]
+            onLinesChangedRef.current(linesRef.current)
+          },
+          onInterim: (text) => setInterim(text),
+          onError: (message) => setError(message),
+          onStateChange: (next) => setState(next),
+        },
+        { diarize },
+      )
+      activeRef.current = active
+    } catch (err) {
+      setError((err as Error).message || 'failed to start')
+      setState('idle')
+    }
+  }, [disabled, state, diarize])
+
+  const stop = useCallback(async () => {
+    const active = activeRef.current
+    activeRef.current = null
+    if (active) await active.stop()
+    setInterim('')
+  }, [])
+
+  const recording = state === 'live' || state === 'connecting'
+  const toggle = () => (recording ? void stop() : void start())
+
+  const label =
+    state === 'connecting'
+      ? 'CONNECTING'
+      : state === 'live'
+        ? 'RECORDING'
+        : state === 'closing'
+          ? 'CLOSING'
+          : linesRef.current.length > 0
+            ? 'SESSION ENDED'
+            : 'STANDBY'
+
+  const modeLocked = state !== 'idle'
+  const hasSession = linesRef.current.length > 0
+  const switchMode = (next: boolean) => {
+    if (next === diarize) return
+    if (hasSession) {
+      const ok = window.confirm(
+        'Switching mode will discard the current transcript. Continue?',
+      )
+      if (!ok) return
+      linesRef.current = []
+      onLinesChangedRef.current([])
+      setInterim('')
+    }
+    setDiarize(next)
+  }
+  const modeButton = (active: boolean, label: string, onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={modeLocked || disabled}
+      style={{
+        padding: '5px 12px',
+        background: 'transparent',
+        border: `1px solid ${active ? 'var(--text-muted)' : '#1A1A1A'}`,
+        color: active ? 'var(--text)' : '#2E2E2E',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        letterSpacing: 2,
+        cursor: modeLocked || disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {label}
+    </button>
+  )
+
+  const statusColor =
+    state === 'live'
+      ? 'var(--coral)'
+      : state === 'connecting'
+        ? 'var(--amber)'
+        : state === 'closing'
+          ? 'var(--text-muted)'
+          : 'var(--text-muted)'
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 28, padding: '30px 0' }}>
-      <button
-        type="button"
-        onClick={toggle}
-        disabled={!supported || disabled}
-        aria-label={recording ? 'Stop recording' : 'Start recording'}
-        style={{
-          position: 'relative',
-          width: 38,
-          height: 38,
-          borderRadius: '50%',
-          background: 'transparent',
-          border: `1px solid ${recording ? 'var(--coral)' : 'var(--border-bright)'}`,
-          cursor: !supported || disabled ? 'not-allowed' : 'pointer',
-          color: recording ? 'var(--coral)' : 'var(--text)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 13,
-        }}
-      >
-        ●
-        {recording && (
-          <span
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: -2,
-              borderRadius: '50%',
-              border: '1px solid var(--coral)',
-              animation: 'pulse-ring 1.6s ease infinite',
-            }}
-          />
-        )}
-      </button>
+    <div className="mic-stage">
+      <div className="mic-stage__mode">
+        <span className="mic-stage__mode-label">MODE</span>
+        {modeButton(diarize, 'MULTI-SPEAKER', () => switchMode(true))}
+        {modeButton(!diarize, 'SINGLE SPEAKER', () => switchMode(false))}
+      </div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 20 }}>
-        {Array.from({ length: 15 }, (_, i) => {
-          const h = 4 + ((i * 7) % 14)
+      <div className="mic-btn-slot">
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={disabled || state === 'closing'}
+          aria-label={recording ? 'Stop recording' : 'Start recording'}
+          className={`mic-btn ${recording ? 'mic-btn--rec' : ''} ${state === 'connecting' ? 'mic-btn--connecting' : ''}`}
+        >
+          {!recording && state === 'idle' && !disabled && (
+            <>
+              <span className="mic-btn__wave mic-btn__wave--1" aria-hidden />
+              <span className="mic-btn__wave mic-btn__wave--2" aria-hidden />
+              <span className="mic-btn__wave mic-btn__wave--3" aria-hidden />
+            </>
+          )}
+          <span className="mic-btn__icon" aria-hidden>
+            {recording ? (
+              <span className="mic-btn__stop" />
+            ) : (
+              <span className="mic-btn__dot" />
+            )}
+          </span>
+          {recording && (
+            <>
+              <span className="mic-btn__halo mic-btn__halo--1" aria-hidden />
+              <span className="mic-btn__halo mic-btn__halo--2" aria-hidden />
+            </>
+          )}
+          {state === 'connecting' && <span className="mic-btn__spinner" aria-hidden />}
+        </button>
+      </div>
+
+      <div className="mic-stage__status" style={{ color: statusColor }}>
+        {label}
+      </div>
+
+      <div className="mic-stage__bars" aria-hidden>
+        {Array.from({ length: 32 }, (_, i) => {
+          const h = 4 + ((i * 7) % 18)
           return (
             <span
               key={i}
@@ -195,39 +188,9 @@ export function MicInput({
         })}
       </div>
 
-      <div
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 13,
-          letterSpacing: 2,
-          color: recording ? 'var(--coral)' : 'var(--text-muted)',
-          minWidth: 120,
-        }}
-      >
-        {label}
-      </div>
+      <div className="mic-stage__interim">{interim || ' '}</div>
 
-      {interim && (
-        <div
-          style={{
-            fontSize: 15,
-            color: 'var(--text-muted)',
-            opacity: 0.65,
-            fontStyle: 'italic',
-            maxWidth: 400,
-          }}
-        >
-          {interim}
-        </div>
-      )}
-      {error && (
-        <div style={{ color: 'var(--coral)', fontSize: 14 }}>{error}</div>
-      )}
-      {!supported && (
-        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-          Web Speech API unsupported in this browser.
-        </div>
-      )}
+      {error && <div className="mic-stage__error">{error}</div>}
     </div>
   )
 }

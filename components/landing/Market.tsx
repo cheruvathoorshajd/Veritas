@@ -12,12 +12,18 @@ const FIELD = [
 ]
 
 const VERITAS = [
-  'Live mic + file + text paste — one product, every surface.',
-  'Per-speaker attribution with accuracy scores and exportable reports.',
-  'Open-domain Web RAG over real sources, never a stale corpus.',
-  'Multi-agent ReAct loop with human-in-the-loop approval on borderline calls.',
-  'Runs entirely on free tiers — $0 infra, open source.',
-  'Deploys to Vercel in one command, anyone can self-host.',
+  'Four input formats — live mic, Word .docx, PDF, pasted text — flow into one pipeline.',
+  'Per-speaker attribution via AssemblyAI diarization (up to 26 labels); single- or multi-speaker mic mode.',
+  'Open-domain Web RAG over Tavily, Wikipedia, and PolitiFact — three live sources, fired in parallel.',
+  'Four-agent LangGraph orchestration: extract → ReAct verify → synthesise verdict → per-speaker report.',
+  'LLM resilience — Gemini 2.0 Flash with automatic Groq Llama 3.3 fallback on quota errors.',
+  'Human-in-the-loop approval for verdicts in the 40–70% confidence band.',
+  'Real-time SSE pipeline — every stage, claim, and verdict streamed to the browser as it happens.',
+  'Rhetorical-pattern detection on every claim — eleven classical fallacies flagged inline.',
+  'Confidence decay tuned per claim type — statistical claims age faster than historical facts.',
+  'Cross-session speaker credibility — reputations persist between recordings.',
+  'Downloadable HTML report (browser-printable to PDF) with persistent share link via Supabase.',
+  'Runs entirely on free tiers — $0 infrastructure, deploys to Vercel in one command.',
 ]
 
 function Item({ color, text }: { color: string; text: string }) {
@@ -38,7 +44,7 @@ export function Market() {
       style={{ padding: '120px 48px', borderBottom: '1px solid var(--border)' }}
     >
       <div className="section-label reveal">
-        <span className="num">(03)</span>
+        <span className="num">(04)</span>
         <span>VS. THE MARKET</span>
       </div>
 

@@ -1,6 +1,33 @@
 export type InputMode = 'mic' | 'file' | 'text'
 
-export type VerdictLabel = 'VERIFIED' | 'FALSE' | 'MISLEADING' | 'UNVERIFIED'
+export type VerdictLabel =
+  | 'VERIFIED'
+  | 'FALSE'
+  | 'MISLEADING'
+  | 'UNVERIFIED'
+  | 'CONTESTED'
+
+export type ClaimType =
+  | 'statistical'
+  | 'causal'
+  | 'historical'
+  | 'predictive'
+  | 'normative'
+  | 'scientific_consensus'
+  | 'political_position'
+
+export type RhetoricalPattern =
+  | 'appeal_to_authority'
+  | 'false_dichotomy'
+  | 'slippery_slope'
+  | 'ad_hominem'
+  | 'straw_man'
+  | 'appeal_to_fear'
+  | 'cherry_picking'
+  | 'gish_gallop'
+  | 'moving_goalposts'
+  | 'appeal_to_nature'
+  | 'bandwagon'
 
 export type PipelineStage =
   | 'idle'
@@ -21,7 +48,10 @@ export interface Speaker {
   claimsFalse: number
   claimsMisleading: number
   claimsUnverified: number
+  claimsContested?: number
   accuracyPct: number
+  /** Cross-session credibility score from `lib/credibility/score.ts`. */
+  credibilityScore?: number | null
 }
 
 export interface TranscriptLine {
@@ -41,6 +71,14 @@ export interface ExtractedClaim {
   claimText: string
   searchQuery: string
   isCheckworthy: boolean
+  /** Coarse semantic category — drives the confidence-decay half-life table. */
+  claimType?: ClaimType
+  /** Named entities extracted alongside the claim — drives the genealogy graph. */
+  entities?: string[]
+  /** Model's self-rated confidence the claim is verifiable, 0–1. */
+  extractionConfidence?: number
+  /** When this claim was merged with another due to high token overlap. */
+  mergedFromIds?: string[]
 }
 
 export interface Evidence {
@@ -61,10 +99,18 @@ export interface Verdict {
   confidencePct: number
   explanation: string
   evidence: Evidence[]
+  /** Evidence gathered specifically during the adversarial pass (Phase 4E). */
+  counterEvidence?: Evidence[]
   searchQueries: string[]
   iterationsUsed: number
   approvalRequired: boolean
   approved: boolean | null
+  /** Detected rhetorical pattern (Phase 4B). */
+  rhetoricalPattern?: RhetoricalPattern | null
+  /** ISO timestamp when the verdict was produced — used by confidence decay. */
+  producedAt?: string
+  /** Cached claim category propagated from the claim. */
+  claimType?: ClaimType
 }
 
 export interface Session {
@@ -77,6 +123,15 @@ export interface Session {
   speakers: Speaker[]
   stage: PipelineStage
   error: string | null
+  /**
+   * Per-session bearer token issued at create time. Only the holder of
+   * this token can mutate the session (verdict approvals). Returned once
+   * in the create response — never re-emitted.
+   *
+   * Server only — clients should never read this off a fetched Session.
+   * The API surface only includes it on the POST /api/session response.
+   */
+  approvalToken?: string
 }
 
 export interface SearchResult {
@@ -85,6 +140,8 @@ export interface SearchResult {
   content: string
   score: number
 }
+
+export type RetrievalSource = 'tavily' | 'wikipedia' | 'politifact'
 
 export type StreamEvent =
   | { type: 'stage'; stage: PipelineStage }
@@ -96,3 +153,35 @@ export type StreamEvent =
   | { type: 'complete'; sessionId: string }
   | { type: 'error'; message: string }
   | { type: 'approval_required'; verdictId: string; claimText: string; confidencePct: number }
+  | { type: 'retrieval_warning'; source: RetrievalSource; message: string }
+
+// ─── Phase 4A: Claim Genealogy ────────────────────────────────────────────────
+
+export interface GenealogyNode {
+  id: string
+  label: string
+  verdict: VerdictLabel
+  speaker: string
+  entities: string[]
+}
+
+export interface GenealogyEdge {
+  from: string
+  to: string
+  weight: number
+  sharedEntities: string[]
+}
+
+export interface GenealogyGraph {
+  nodes: GenealogyNode[]
+  edges: GenealogyEdge[]
+}
+
+// ─── Phase 4C: Confidence Decay ───────────────────────────────────────────────
+
+export interface FreshnessInfo {
+  freshness: number // 0..1
+  isStale: boolean
+  daysElapsed: number
+  halfLifeDays: number | null // null = never decays
+}

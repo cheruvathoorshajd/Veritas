@@ -1,15 +1,16 @@
 import { traceable } from 'langsmith/traceable'
 import type { LLM } from '@/lib/agents/llm'
-import type { Evidence, ExtractedClaim, SearchResult } from '@/lib/types'
-import { searchTavily } from '@/lib/retrieval/tavily'
-import { searchWikipedia } from '@/lib/retrieval/wikipedia'
-import { searchPolitifact } from '@/lib/retrieval/politifact'
+import type { Evidence, ExtractedClaim, RetrievalSource } from '@/lib/types'
+import { searchTavilyWithStatus } from '@/lib/retrieval/tavily'
+import { searchWikipediaWithStatus } from '@/lib/retrieval/wikipedia'
+import { searchPolitifact, getLastPolitifactError } from '@/lib/retrieval/politifact'
 import { compressDocument } from '@/lib/retrieval/compress'
 import { classifyNli } from '@/lib/nlp/nli'
 import { reformulateQuery } from '@/lib/nlp/query-reformulator'
 
 export interface VerificationProgress {
   onIteration?: (query: string, iteration: number) => void
+  onRetrievalIssue?: (source: RetrievalSource, message: string) => void
 }
 
 interface GatheredResult {
@@ -30,14 +31,35 @@ function tagSource(url: string, fallback: string): string {
   }
 }
 
-async function gatherParallel(query: string): Promise<GatheredResult[]> {
+async function gatherParallel(
+  query: string,
+  onIssue?: (source: RetrievalSource, message: string) => void,
+): Promise<GatheredResult[]> {
   const [tav, wiki, poli] = await Promise.all([
-    searchTavily(query, 5).catch(() => [] as SearchResult[]),
-    searchWikipedia(query).catch(() => null),
-    searchPolitifact(query).catch(() => [] as SearchResult[]),
+    searchTavilyWithStatus(query, 5).catch((err) => ({
+      results: [],
+      configured: true,
+      error: (err as Error).message,
+    })),
+    searchWikipediaWithStatus(query).catch((err) => ({
+      result: null,
+      error: (err as Error).message,
+    })),
+    searchPolitifact(query).catch((err) => {
+      onIssue?.('politifact', (err as Error).message)
+      return []
+    }),
   ])
+
+  if (tav.error) onIssue?.('tavily', tav.error)
+  if (wiki.error) onIssue?.('wikipedia', wiki.error)
+  // PolitiFact only mutates a module-level error sentinel; surface the most
+  // recent one if it changed during this call.
+  const politifactErr = getLastPolitifactError()
+  if (politifactErr) onIssue?.('politifact', politifactErr)
+
   const out: GatheredResult[] = []
-  for (const r of tav) {
+  for (const r of tav.results) {
     if (!r.content) continue
     out.push({
       title: r.title,
@@ -47,13 +69,13 @@ async function gatherParallel(query: string): Promise<GatheredResult[]> {
       score: r.score,
     })
   }
-  if (wiki) {
+  if (wiki.result) {
     out.push({
-      title: wiki.title,
-      url: wiki.url,
+      title: wiki.result.title,
+      url: wiki.result.url,
       source: 'Wikipedia',
-      content: wiki.content,
-      score: wiki.score,
+      content: wiki.result.content,
+      score: wiki.result.score,
     })
   }
   for (const r of poli) {
@@ -124,7 +146,7 @@ async function runReActVerificationImpl(
     queries.push(query)
     progress?.onIteration?.(query, iteration + 1)
 
-    const gathered = await gatherParallel(query)
+    const gathered = await gatherParallel(query, progress?.onRetrievalIssue)
     // Two-level early termination: the inner break stops scoring further
     // docs from this iteration once sufficiency is met, the outer break
     // (after iteration++) skips the next ReAct iteration entirely. Either

@@ -1,10 +1,11 @@
 'use client'
 
-import Link from 'next/link'
 import { useReveal } from './useReveal'
+import { useTransitionNavigate } from '@/components/PageTransition'
 
 export function ProductCTA() {
   const ref = useReveal<HTMLElement>()
+  const navigate = useTransitionNavigate()
   return (
     <section
       ref={ref}
@@ -12,7 +13,7 @@ export function ProductCTA() {
       style={{ padding: '140px 48px' }}
     >
       <div className="section-label reveal">
-        <span className="num">(04)</span>
+        <span className="num">(05)</span>
         <span>THE PRODUCT</span>
       </div>
       <h2
@@ -31,11 +32,16 @@ export function ProductCTA() {
         className="reveal delay-2"
         style={{ fontSize: 18, color: 'var(--text-muted)', marginBottom: 40, maxWidth: 540 }}
       >
-        Run the demo to see the full pipeline in action — mic in, verdicts out, per-speaker
-        accuracy at the bottom.
+        Stream from the mic, drop a Word doc or PDF, or paste a transcript. Watch claims get
+        extracted, verified against the live web, and scored per speaker — in real time.
+        Download the report when you&rsquo;re done.
       </p>
-      <Link
+      <a
         href="/app"
+        onClick={(e) => {
+          e.preventDefault()
+          navigate('/app')
+        }}
         className="reveal delay-3"
         style={{
           display: 'inline-block',
@@ -49,7 +55,7 @@ export function ProductCTA() {
         }}
       >
         → OPEN THE APP
-      </Link>
+      </a>
     </section>
   )
 }

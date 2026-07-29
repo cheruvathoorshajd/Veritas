@@ -1,11 +1,5 @@
 import type { TranscriptLine } from '@/lib/types'
 
-export interface WebSpeechResult {
-  transcript: string
-  isFinal: boolean
-  confidence: number
-}
-
 export function formatTimestamp(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
   const m = Math.floor(total / 60)
@@ -23,7 +17,6 @@ export function chunkToTranscriptLine(
   startMs: number,
 ): TranscriptLine {
   const trimmed = text.trim()
-  // rough 150wpm estimate for endMs
   const wpm = 150
   const words = Math.max(1, trimmed.split(/\s+/).length)
   const durationMs = Math.round((words / wpm) * 60_000)
@@ -35,6 +28,25 @@ export function chunkToTranscriptLine(
     startMs,
     endMs: startMs + durationMs,
   }
+}
+
+// Sentinel char (U+0001) substituted for "."s that are part of abbreviations,
+// initials, or decimals so the sentence splitter doesn't break on them.
+const SENT_DOT = String.fromCharCode(1)
+const ABBREVIATIONS =
+  /\b(?:Mr|Mrs|Ms|Mx|Dr|Prof|Rev|Fr|Sr|Jr|St|Hon|Gen|Col|Sgt|Lt|Capt|Cmdr|Inc|Ltd|Co|Corp|Bros|Assn|Dept|Univ|No|Vol|pp|p|vs|etc|al|e\.g|i\.e|U\.S|U\.K|U\.N|E\.U|a\.m|p\.m|A\.M|P\.M)\./g
+
+export function splitSentencesPreservingAbbreviations(text: string): string[] {
+  const protectedText = text
+    .replace(ABBREVIATIONS, (m) => m.slice(0, -1) + SENT_DOT)
+    .replace(/\b([A-Z])\.(?=\s+[A-Z])/g, (_m, c) => `${c}${SENT_DOT}`)
+    .replace(/(\d)\.(\d)/g, (_m, a, b) => `${a}${SENT_DOT}${b}`)
+
+  const matches =
+    protectedText.match(/[^.!?]+[.!?]+(?:["')\]]+)?/g) ?? [protectedText]
+  return matches
+    .map((s) => s.split(SENT_DOT).join('.').trim())
+    .filter(Boolean)
 }
 
 // Detect "Speaker A:" / "A:" style speaker prefixes
@@ -59,20 +71,23 @@ export function parseTranscriptFromText(input: string): TranscriptLine[] {
       currentSpeaker = match[1].toUpperCase()
       const body = match[2].trim()
       if (body) {
-        out.push(chunkToTranscriptLine(body, currentSpeaker, cursorMs))
-        const words = Math.max(1, body.split(/\s+/).length)
-        cursorMs += Math.round((words / 150) * 60_000) + 1000
+        for (const sentence of splitSentencesPreservingAbbreviations(body)) {
+          out.push(chunkToTranscriptLine(sentence, currentSpeaker, cursorMs))
+          const w = Math.max(1, sentence.split(/\s+/).length)
+          cursorMs += Math.round((w / 150) * 60_000) + 500
+        }
       }
     } else {
-      out.push(chunkToTranscriptLine(line, currentSpeaker, cursorMs))
-      const words = Math.max(1, line.split(/\s+/).length)
-      cursorMs += Math.round((words / 150) * 60_000) + 1000
+      for (const sentence of splitSentencesPreservingAbbreviations(line)) {
+        out.push(chunkToTranscriptLine(sentence, currentSpeaker, cursorMs))
+        const w = Math.max(1, sentence.split(/\s+/).length)
+        cursorMs += Math.round((w / 150) * 60_000) + 500
+      }
     }
   }
 
   if (!detectedAny) {
-    // Whole input as a single speaker A line (broken by sentences)
-    const sentences = input.match(/[^.!?]+[.!?]+/g) ?? [input.trim()]
+    const sentences = splitSentencesPreservingAbbreviations(input)
     const result: TranscriptLine[] = []
     let t = 0
     for (const s of sentences) {

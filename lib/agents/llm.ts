@@ -73,9 +73,10 @@ export function createResilientLLM(): ResilientLLM {
   if (!geminiKey) throw new Error('GOOGLE_GENERATIVE_AI_API_KEY is not set')
   const gemini = new ChatGoogleGenerativeAI({
     apiKey: geminiKey,
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     temperature: 0.1,
     maxOutputTokens: 2048,
+    thinkingConfig: { thinkingBudget: 0 },
   })
   return new ResilientLLM(gemini, process.env.GROQ_API_KEY)
 }

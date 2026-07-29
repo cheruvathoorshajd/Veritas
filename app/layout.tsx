@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { PageTransition } from '@/components/PageTransition'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 export const metadata: Metadata = {
   title: 'Veritas — The Truth Machine',
@@ -12,7 +14,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ErrorBoundary>
+          <PageTransition>{children}</PageTransition>
+        </ErrorBoundary>
+      </body>
     </html>
   )
 }

@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useReveal } from './useReveal'
 
 export function Hero() {
@@ -88,15 +87,16 @@ export function Hero() {
           }}
         >
           <p style={{ fontSize: 23, lineHeight: 1.45, color: 'var(--text)' }}>
-            Every conversation, transcribed, attributed,
+            Every conversation, document, or transcript —
             <br />
-            and fact-checked in real time.
+            attributed, verified, and sourced in real time.
           </p>
           <div style={{ color: 'var(--text-muted)', fontSize: 16, lineHeight: 1.7 }}>
             <p style={{ marginBottom: 22 }}>
-              Veritas runs speech through a multi-agent LangGraph pipeline, extracts every
-              verifiable claim, and issues per-speaker evidence-backed verdicts. $0 infrastructure
-              cost. Built for the open internet.
+              Mic streaming, Word and PDF uploads, or pasted text — all flow through a four-agent
+              LangGraph pipeline that extracts every verifiable claim, runs a ReAct loop over
+              Tavily, Wikipedia, and PolitiFact, and streams per-speaker verdicts back over SSE.
+              Gemini with Groq auto-fallback. Built for the open internet, $0 infrastructure.
             </p>
             <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
               <a
@@ -114,10 +114,8 @@ export function Hero() {
               >
                 SEE THE PRODUCT →
               </a>
-              <Link
-                href="https://github.com"
-                target="_blank"
-                rel="noopener"
+              <a
+                href="#pipeline"
                 style={{
                   display: 'inline-block',
                   padding: '10px 22px',
@@ -129,8 +127,8 @@ export function Hero() {
                   letterSpacing: '2px',
                 }}
               >
-                GITHUB
-              </Link>
+                HOW IT WORKS
+              </a>
             </div>
           </div>
         </div>
@@ -155,7 +153,7 @@ export function Hero() {
         <span style={{ color: 'var(--text-muted)' }}>·</span>
         <span>3 RETRIEVAL SOURCES</span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
-        <span>8–15 SECOND LATENCY</span>
+        <span>SSE STREAMING</span>
         <span style={{ color: 'var(--text-muted)' }}>·</span>
         <span>$0 / MONTH</span>
       </div>

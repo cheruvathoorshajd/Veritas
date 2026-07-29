@@ -10,7 +10,7 @@ import type {
 } from '@/lib/types'
 import { runVeritasPipeline, type GraphEvent } from '@/lib/agents/graph'
 import { createSSEStream } from '@/lib/utils/stream'
-import { rateLimit, clientKey } from '@/lib/utils/rate-limit'
+import { rateLimit, clientKey, rateLimitResponseBody } from '@/lib/utils/rate-limit'
 import { updateSession, getSession, createSession } from '@/lib/db/sessions'
 
 export const runtime = 'nodejs'
@@ -21,6 +21,56 @@ interface PipelineBody {
   sessionId?: string
   transcriptLines?: TranscriptLine[]
   inputMode?: InputMode
+}
+
+const MAX_LINES = 500
+const MAX_TEXT_PER_LINE = 5_000
+const MAX_TOTAL_CHARS = 200_000
+
+type Validation =
+  | { ok: true; lines: TranscriptLine[] }
+  | { ok: false; error: string }
+
+function validateTranscriptLines(input: unknown): Validation {
+  if (!Array.isArray(input)) {
+    return { ok: false, error: 'transcriptLines must be an array' }
+  }
+  if (input.length === 0) return { ok: false, error: 'transcriptLines is required' }
+  if (input.length > MAX_LINES) {
+    return { ok: false, error: `Too many transcript lines (max ${MAX_LINES})` }
+  }
+
+  let totalChars = 0
+  const out: TranscriptLine[] = []
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] as Partial<TranscriptLine> | undefined
+    if (!raw || typeof raw !== 'object') {
+      return { ok: false, error: `transcriptLines[${i}] is not an object` }
+    }
+    const text = typeof raw.text === 'string' ? raw.text : ''
+    if (!text.trim()) {
+      return { ok: false, error: `transcriptLines[${i}].text is empty` }
+    }
+    if (text.length > MAX_TEXT_PER_LINE) {
+      return {
+        ok: false,
+        error: `transcriptLines[${i}].text exceeds ${MAX_TEXT_PER_LINE} chars`,
+      }
+    }
+    totalChars += text.length
+    if (totalChars > MAX_TOTAL_CHARS) {
+      return { ok: false, error: `Total transcript size exceeds ${MAX_TOTAL_CHARS} chars` }
+    }
+    out.push({
+      id: typeof raw.id === 'string' ? raw.id : `${Date.now()}-${i}`,
+      speaker: typeof raw.speaker === 'string' ? raw.speaker.slice(0, 4) : 'A',
+      text,
+      timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : '0:00',
+      startMs: typeof raw.startMs === 'number' ? raw.startMs : 0,
+      endMs: typeof raw.endMs === 'number' ? raw.endMs : 0,
+    })
+  }
+  return { ok: true, lines: out }
 }
 
 async function runPipeline(
@@ -111,6 +161,13 @@ async function runPipeline(
       case 'complete':
         send({ type: 'complete', sessionId })
         break
+      case 'retrieval_warning':
+        send({
+          type: 'retrieval_warning',
+          source: event.source,
+          message: event.message,
+        })
+        break
       case 'error':
         // Per-claim failure surfaced from inside the graph. The graph keeps
         // running and emits a placeholder UNVERIFIED verdict for the claim,
@@ -140,10 +197,15 @@ async function runPipeline(
 
 export async function POST(req: NextRequest) {
   const key = clientKey(req)
-  const rl = rateLimit(`pipeline:${key}`, 10, 60_000)
+  // Pipeline hits 5 paid APIs per run, so it gets the strictest budget:
+  // 3 runs per minute, 50 per day, per IP.
+  const rl = await rateLimit(`pipeline:${key}`, [
+    { max: 3, windowSeconds: 60, label: 'per-minute' },
+    { max: 50, windowSeconds: 86_400, label: 'per-day' },
+  ])
   if (!rl.allowed) {
     return new Response(
-      JSON.stringify({ error: 'Rate limit exceeded' }),
+      JSON.stringify(rateLimitResponseBody(rl, 'pipeline')),
       {
         status: 429,
         headers: {
@@ -164,13 +226,15 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const lines = Array.isArray(body.transcriptLines) ? body.transcriptLines : []
-  if (!lines.length) {
-    return new Response(JSON.stringify({ error: 'transcriptLines is required' }), {
+  const validation = validateTranscriptLines(body.transcriptLines)
+  if (!validation.ok) {
+    return new Response(JSON.stringify({ error: validation.error }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  const lines = validation.lines
+
   const inputMode: InputMode =
     body.inputMode === 'mic' || body.inputMode === 'file' || body.inputMode === 'text'
       ? body.inputMode

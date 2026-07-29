@@ -36,7 +36,13 @@ interface ClaimResult {
   latencyMs: number
 }
 
-const LABELS: VerdictLabel[] = ['VERIFIED', 'FALSE', 'MISLEADING', 'UNVERIFIED']
+const LABELS: VerdictLabel[] = [
+  'VERIFIED',
+  'FALSE',
+  'MISLEADING',
+  'UNVERIFIED',
+  'CONTESTED',
+]
 
 // Minimal .env.local loader — tsx does not auto-load env files like
 // `next dev` does, and we want `pnpm eval` to Just Work when keys live in

@@ -37,10 +37,21 @@ export function FileInput({
         const res = await fetch('/api/transcribe', { method: 'POST', body: form })
         clearInterval(timer)
         if (!res.ok) {
-          const body = (await res.json().catch(() => ({ error: 'Upload failed' }))) as {
-            error?: string
+          const body = (await res.json().catch(() => null)) as
+            | { error?: string; code?: string; retryAfterSeconds?: number; hitWindow?: string }
+            | null
+          if (res.status === 429) {
+            const retry = body?.retryAfterSeconds ?? 60
+            const win = body?.hitWindow ? ` (${body.hitWindow})` : ''
+            throw new Error(`Upload rate-limited${win}. Try again in ${retry}s.`)
           }
-          throw new Error(body.error || `Upload failed (${res.status})`)
+          if (res.status === 413) {
+            throw new Error(body?.error || 'File too large — 25 MB max.')
+          }
+          if (res.status === 415 || res.status === 422) {
+            throw new Error(body?.error || `Upload rejected (HTTP ${res.status})`)
+          }
+          throw new Error(body?.error || `Upload failed (${res.status})`)
         }
         const data = (await res.json()) as { lines: TranscriptLine[] }
         setProgress(100)
@@ -92,14 +103,14 @@ export function FileInput({
           </div>
         ) : (
           <div>
-            <div style={{ color: 'var(--text)', marginBottom: 8 }}>DROP AUDIO OR VIDEO HERE</div>
-            <div style={{ fontSize: 13 }}>MP3 · MP4 · WAV · M4A · WEBM · OGG · FLAC · MAX 100MB</div>
+            <div style={{ color: 'var(--text)', marginBottom: 8 }}>DROP DOCUMENT HERE</div>
+            <div style={{ fontSize: 13 }}>.DOCX · .PDF · MAX 25MB</div>
           </div>
         )}
         <input
           ref={inputRef}
           type="file"
-          accept="audio/*,video/*"
+          accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]
@@ -136,13 +147,13 @@ export function FileInput({
               letterSpacing: 1.5,
             }}
           >
-            TRANSCRIBING · {progress}%
+            EXTRACTING · {progress}%
           </div>
         </div>
       )}
       {status === 'done' && (
         <div style={{ marginTop: 14, color: 'var(--teal)', fontSize: 14 }}>
-          Transcript ready — running pipeline.
+          Document parsed — running pipeline.
         </div>
       )}
       {error && (

@@ -1,6 +1,9 @@
 import { tavily, type TavilyClient } from '@tavily/core'
 import type { SearchResult } from '@/lib/types'
 import { withRetry } from '@/lib/utils/retry'
+import { logger } from '@/lib/utils/logger'
+
+const log = logger('tavily')
 
 let client: TavilyClient | null = null
 function getClient(): TavilyClient | null {
@@ -11,11 +14,19 @@ function getClient(): TavilyClient | null {
   return client
 }
 
-export async function searchTavily(query: string, maxResults = 5): Promise<SearchResult[]> {
+export interface SearchOutcome {
+  results: SearchResult[]
+  error?: string
+  configured: boolean
+}
+
+export async function searchTavilyWithStatus(
+  query: string,
+  maxResults = 5,
+): Promise<SearchOutcome> {
   const c = getClient()
   if (!c) {
-    console.warn('[tavily] TAVILY_API_KEY not set, skipping search')
-    return []
+    return { results: [], configured: false, error: 'TAVILY_API_KEY not set' }
   }
   try {
     const res = await withRetry(
@@ -28,14 +39,23 @@ export async function searchTavily(query: string, maxResults = 5): Promise<Searc
       { maxRetries: 2, label: 'tavily' },
     )
     const results = res?.results ?? []
-    return results.map((r) => ({
-      title: r.title ?? '',
-      url: r.url ?? '',
-      content: r.content ?? '',
-      score: typeof r.score === 'number' ? r.score : 0,
-    }))
+    return {
+      configured: true,
+      results: results.map((r) => ({
+        title: r.title ?? '',
+        url: r.url ?? '',
+        content: r.content ?? '',
+        score: typeof r.score === 'number' ? r.score : 0,
+      })),
+    }
   } catch (err) {
-    console.warn('[tavily] search failed after retries:', (err as Error).message)
-    return []
+    const message = (err as Error).message || 'unknown error'
+    log.warn('search failed after retries', { query, error: message })
+    return { results: [], configured: true, error: message }
   }
+}
+
+export async function searchTavily(query: string, maxResults = 5): Promise<SearchResult[]> {
+  const { results } = await searchTavilyWithStatus(query, maxResults)
+  return results
 }

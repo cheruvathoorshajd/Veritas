@@ -5,6 +5,7 @@ import type {
   ExtractedClaim,
   InputMode,
   PipelineStage,
+  RetrievalSource,
   Speaker,
   TranscriptLine,
   Verdict,
@@ -29,6 +30,7 @@ export type GraphEvent =
   | { type: 'speaker_update'; speaker: Speaker }
   | { type: 'complete' }
   | { type: 'error'; message: string }
+  | { type: 'retrieval_warning'; source: RetrievalSource; message: string }
 
 export type GraphEventEmitter = (event: GraphEvent) => void
 
@@ -100,6 +102,8 @@ async function verifyNode(state: VeritasStateType): Promise<Partial<VeritasState
       {
         onIteration: (query, iteration) =>
           state.onEvent({ type: 'verifying', claimId: claim.id, query, iteration }),
+        onRetrievalIssue: (source, message) =>
+          state.onEvent({ type: 'retrieval_warning', source, message }),
       },
     )
     return {

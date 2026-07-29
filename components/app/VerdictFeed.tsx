@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import type { Verdict, VerdictLabel } from '@/lib/types'
+import { FreshnessBadge } from './FreshnessBadge'
+import { RhetoricBadge } from './RhetoricBadge'
+import { CounterEvidence } from './CounterEvidence'
 
 const LABEL_COLOR: Record<VerdictLabel, string> = {
   VERIFIED: 'var(--teal)',
   FALSE: 'var(--coral)',
   MISLEADING: 'var(--amber)',
   UNVERIFIED: 'var(--gray-v)',
+  CONTESTED: 'var(--violet)',
 }
 
 const SPEAKER_COLOR: Record<string, string> = {
@@ -57,12 +61,16 @@ function VerdictItem({
   const color = LABEL_COLOR[verdict.label]
   const speakerColor = SPEAKER_COLOR[verdict.speaker] ?? 'var(--text)'
   const firstSource = verdict.evidence[0]?.source ?? 'no source'
+  const isContested = verdict.label === 'CONTESTED'
+  const counterEvidence = verdict.counterEvidence ?? []
 
   return (
     <article
       style={{
         padding: '22px 14px',
         borderBottom: '1px solid var(--border)',
+        borderLeft: isContested ? `2px solid ${color}` : 'none',
+        paddingLeft: isContested ? 18 : 14,
         animation: 'fadeUp 0.5s ease',
       }}
       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface)')}
@@ -77,7 +85,7 @@ function VerdictItem({
             color,
           }}
         >
-          {verdict.label}
+          {isContested ? '⚡ CONTESTED' : verdict.label}
         </div>
         <div
           style={{
@@ -103,6 +111,7 @@ function VerdictItem({
           display: 'flex',
           gap: 8,
           flexWrap: 'wrap',
+          alignItems: 'center',
         }}
       >
         <span style={{ color: speakerColor }}>SPEAKER {verdict.speaker}</span>
@@ -112,12 +121,18 @@ function VerdictItem({
         <span>VIA {firstSource.toUpperCase()}</span>
         <span>·</span>
         <span>{verdict.iterationsUsed} ITER</span>
+        <FreshnessBadge verdict={verdict} />
+        <RhetoricBadge pattern={verdict.rhetoricalPattern} />
       </div>
       <p style={{ marginTop: 10, fontSize: 15, color: '#777', lineHeight: 1.65 }}>
         {verdict.explanation}
       </p>
 
       <ConfidenceBar pct={verdict.confidencePct} label={verdict.label} />
+
+      {(isContested || counterEvidence.length > 0) && (
+        <CounterEvidence supporting={verdict.evidence} counter={counterEvidence} />
+      )}
 
       {verdict.approvalRequired && verdict.approved === null && (
         <div
@@ -215,7 +230,7 @@ export function VerdictFeed({
     )
   }
   return (
-    <div>
+    <div role="region" aria-live="polite" aria-label="Verdict stream">
       {verdicts.map((v) => (
         <VerdictItem key={v.id} verdict={v} onApprove={onApprove} />
       ))}

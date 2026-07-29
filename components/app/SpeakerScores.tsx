@@ -1,6 +1,8 @@
 'use client'
 
-import type { Speaker } from '@/lib/types'
+import type { Speaker, Verdict } from '@/lib/types'
+import { CredibilityBadge } from './CredibilityBadge'
+import { computeCredibilityBySpeaker } from '@/lib/credibility/score'
 
 const SPEAKER_COLOR: Record<string, string> = {
   A: 'var(--speaker-a)',
@@ -9,8 +11,15 @@ const SPEAKER_COLOR: Record<string, string> = {
   D: 'var(--speaker-d)',
 }
 
-export function SpeakerScores({ speakers }: { speakers: Speaker[] }) {
+export function SpeakerScores({
+  speakers,
+  verdicts = [],
+}: {
+  speakers: Speaker[]
+  verdicts?: Verdict[]
+}) {
   if (!speakers.length) return null
+  const credibilityByLabel = computeCredibilityBySpeaker(verdicts)
   return (
     <div
       style={{
@@ -23,6 +32,7 @@ export function SpeakerScores({ speakers }: { speakers: Speaker[] }) {
       {speakers.map((s) => {
         const label = SPEAKER_COLOR[s.id] ?? 'var(--text)'
         const pctColor = s.accuracyPct >= 60 ? 'var(--teal)' : 'var(--coral)'
+        const credibility = credibilityByLabel.get(s.id)
         return (
           <div key={s.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 18 }}>
             <div
@@ -32,9 +42,16 @@ export function SpeakerScores({ speakers }: { speakers: Speaker[] }) {
                 letterSpacing: 1.5,
                 color: label,
                 marginBottom: 12,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
               }}
             >
-              {s.label.toUpperCase()} · {s.claimsTotal} CLAIM{s.claimsTotal === 1 ? '' : 'S'}
+              <span>
+                {s.label.toUpperCase()} · {s.claimsTotal} CLAIM{s.claimsTotal === 1 ? '' : 'S'}
+              </span>
+              {credibility && <CredibilityBadge breakdown={credibility} size="sm" />}
             </div>
             <div
               style={{
@@ -76,6 +93,9 @@ export function SpeakerScores({ speakers }: { speakers: Speaker[] }) {
               )}
               {s.claimsMisleading > 0 && (
                 <span style={{ color: 'var(--amber)' }}>{s.claimsMisleading} MISLEADING</span>
+              )}
+              {(s.claimsContested ?? 0) > 0 && (
+                <span style={{ color: 'var(--violet)' }}>{s.claimsContested} CONTESTED</span>
               )}
               {s.claimsUnverified > 0 && (
                 <span style={{ color: 'var(--gray-v)' }}>{s.claimsUnverified} UNVERIFIED</span>

@@ -22,6 +22,8 @@
   --amber: #FFAB00;
   --amber-dim: #1A1200;
   --gray-v: #404040;
+  --violet: #A78BFA;
+  --violet-dim: #15102A;
 
   /* Speaker colours */
   --speaker-a: #5A8FD6;
@@ -117,6 +119,270 @@ body {
 .verdict-bg-FALSE     { background: var(--coral-dim); border-color: rgba(255,61,46,.25); }
 .verdict-bg-MISLEADING{ background: var(--amber-dim); border-color: rgba(255,171,0,.25); }
 .verdict-bg-UNVERIFIED{ background: var(--card); border-color: var(--border); }
+.verdict-bg-CONTESTED { background: var(--violet-dim); border-color: rgba(167,139,250,.25); }
+.verdict-CONTESTED    { color: var(--violet); }
+
+/* Page transition curtain */
+.page-transition {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+}
+.page-transition__panel {
+  position: absolute;
+  inset: 0;
+  background: var(--coral);
+  transform: translateY(100%);
+  transition: transform 520ms cubic-bezier(0.83, 0, 0.17, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.page-transition__mark {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 10px;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 280ms ease 120ms, transform 280ms ease 120ms;
+}
+.page-transition.cover .page-transition__panel { transform: translateY(0); }
+.page-transition.cover .page-transition__mark { opacity: 1; transform: translateY(0); }
+.page-transition.reveal .page-transition__panel { transform: translateY(-100%); }
+.page-transition.reveal .page-transition__mark { opacity: 0; transition-delay: 0s; }
+
+/* Destination page fade-in (paired with the curtain reveal) */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-enter { animation: page-enter 520ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Tab-panel cross-fade — retriggers on `key` change */
+@keyframes panel-enter {
+  from { opacity: 0; transform: translateY(6px); filter: blur(1px); }
+  to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
+}
+.panel-enter { animation: panel-enter 320ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Hover tooltip (used by RUN DEMO button) */
+.tooltip-wrap { position: relative; display: inline-flex; }
+.tooltip {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 280px;
+  padding: 14px 16px;
+  background: #161616;
+  border: 1px solid var(--coral);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.55;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+  z-index: 9000;
+}
+.tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  right: 22px;
+  width: 10px;
+  height: 10px;
+  background: #161616;
+  border-top: 1px solid var(--coral);
+  border-left: 1px solid var(--coral);
+  transform: translateY(6px) rotate(45deg);
+}
+.tooltip-wrap:hover .tooltip,
+.tooltip-wrap:focus-within .tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+.tooltip__label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--coral);
+  margin-bottom: 8px;
+}
+
+/* Mic record button */
+.mic-btn {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 360ms ease;
+}
+.mic-btn:hover:not(:disabled) {
+  border-color: var(--coral);
+  transform: scale(1.05);
+}
+.mic-btn:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.mic-btn__icon {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+}
+.mic-btn__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--coral);
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.mic-btn:hover:not(:disabled) .mic-btn__dot { transform: scale(1.18); }
+
+/* Recording state — filled coral with white stop square */
+.mic-btn--rec {
+  background: var(--coral);
+  border-color: var(--coral);
+  box-shadow:
+    0 0 0 6px rgba(255, 61, 46, 0.12),
+    0 0 30px rgba(255, 61, 46, 0.35);
+}
+.mic-btn--rec:hover:not(:disabled) { transform: scale(1.05); }
+.mic-btn__stop {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+/* Two staggered pulse halos when recording */
+@keyframes mic-halo {
+  0%   { opacity: 0.55; transform: scale(1); }
+  100% { opacity: 0;    transform: scale(2.1); }
+}
+.mic-btn__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--coral);
+  pointer-events: none;
+}
+.mic-btn__halo--1 { animation: mic-halo 1.8s ease-out infinite; }
+.mic-btn__halo--2 { animation: mic-halo 1.8s ease-out 0.9s infinite; }
+
+/* Idle attention waves — soft concentric ripples to draw the eye */
+@keyframes mic-wave {
+  0%   { opacity: 0;    transform: scale(0.9); }
+  25%  { opacity: 0.4; }
+  100% { opacity: 0;    transform: scale(1.75); }
+}
+.mic-btn__wave {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--coral);
+  pointer-events: none;
+  opacity: 0;
+}
+.mic-btn__wave--1 { animation: mic-wave 2.4s ease-out infinite; }
+.mic-btn__wave--2 { animation: mic-wave 2.4s ease-out 0.8s infinite; }
+.mic-btn__wave--3 { animation: mic-wave 2.4s ease-out 1.6s infinite; }
+.mic-btn:hover .mic-btn__wave { animation-duration: 1.4s; }
+
+/* Mic input — centered vertical stage with the button as the focal point */
+.mic-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 40px 24px 36px;
+}
+.mic-stage__mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mic-stage__mode-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.mic-btn-slot {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mic-stage__status {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 3px;
+  min-height: 18px;
+  text-align: center;
+}
+.mic-stage__bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  height: 28px;
+  width: 100%;
+  max-width: 360px;
+}
+.mic-stage__interim {
+  font-size: 14px;
+  color: var(--text-muted);
+  opacity: 0.85;
+  font-style: italic;
+  line-height: 1.55;
+  text-align: center;
+  max-width: 560px;
+  min-height: 22px;
+}
+.mic-stage__error {
+  color: var(--coral);
+  font-size: 14px;
+  text-align: center;
+  margin-top: 4px;
+}
+
+/* Connecting state — amber rotating arc */
+@keyframes mic-spin { to { transform: rotate(360deg); } }
+.mic-btn--connecting { border-color: var(--amber); }
+.mic-btn__spinner {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--amber);
+  animation: mic-spin 0.9s linear infinite;
+  pointer-events: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

@@ -3,12 +3,12 @@
 import { useReveal } from './useReveal'
 
 const STAGES = [
-  { num: '01', title: 'Input', desc: 'Mic · file · paste' },
-  { num: '02', title: 'Transcribe', desc: 'AssemblyAI + Web Speech' },
-  { num: '03', title: 'Diarize', desc: 'AssemblyAI diarization' },
-  { num: '04', title: 'Extract', desc: 'NER + claim detector' },
-  { num: '05', title: 'Verify', desc: 'ReAct web RAG loop' },
-  { num: '06', title: 'Verdict', desc: 'Label + confidence' },
+  { num: '01', title: 'Input', desc: 'Mic · DOCX · PDF · paste' },
+  { num: '02', title: 'Transcribe', desc: 'AssemblyAI · mammoth · pdf-parse' },
+  { num: '03', title: 'Diarize', desc: 'AssemblyAI labels or speaker prefixes' },
+  { num: '04', title: 'Extract', desc: 'LLM claim detection (Gemini/Groq)' },
+  { num: '05', title: 'Verify', desc: 'ReAct loop · 3 web sources' },
+  { num: '06', title: 'Verdict', desc: 'Label · confidence · speaker score' },
 ]
 
 export function Pipeline() {
@@ -34,7 +34,7 @@ export function Pipeline() {
           color: 'var(--text)',
         }}
       >
-        Six layers. Eight to fifteen seconds. Speech to verdict.
+        Six stages. Streamed live over SSE. From raw input to per-speaker verdict.
       </p>
 
       <div

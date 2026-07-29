@@ -12,21 +12,31 @@ import type {
 } from '@/lib/types'
 import { Header } from './Header'
 import { InputSection } from './InputSection'
+import { InputDeck } from './InputDeck'
 import { PipelineBar } from './PipelineBar'
 import { TranscriptFeed } from './TranscriptFeed'
 import { VerdictFeed } from './VerdictFeed'
 import { SpeakerScores } from './SpeakerScores'
+import { Genealogy } from './Genealogy'
 import { ExportButton } from './ExportButton'
 import { SectionLabel } from './SectionLabel'
 import { DEMO_CLAIMS, DEMO_TRANSCRIPT, DEMO_VERDICTS } from './demoData'
 import { generateReportClient } from './reportClient'
+import { useApproval } from './useApproval'
+import { useRunCurtain, useTransitionNavigate } from '@/components/PageTransition'
+
+type View = 'deck' | 'feature'
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function AppShell() {
+  const [view, setView] = useState<View>('deck')
   const [inputMode, setInputMode] = useState<InputMode>('text')
   const [stage, setStage] = useState<PipelineStage>('idle')
+  const runCurtain = useRunCurtain()
+  const transitionNavigate = useTransitionNavigate()
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
+  const [approvalToken, setApprovalToken] = useState<string | undefined>(undefined)
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([])
   const [claims, setClaims] = useState<ExtractedClaim[]>([])
   const [verdicts, setVerdicts] = useState<Verdict[]>([])
@@ -50,6 +60,7 @@ export function AppShell() {
     demoAbortRef.current = null
     setStage('idle')
     setSessionId(undefined)
+    setApprovalToken(undefined)
     setTranscriptLines([])
     setClaims([])
     setVerdicts([])
@@ -67,42 +78,47 @@ export function AppShell() {
     setStage((s) => (s === 'complete' || s === 'error' ? s : 'idle'))
   }, [])
 
-  const handleApprove = useCallback(
-    (verdictId: string, approved: boolean) => {
-      // Optimistic update
-      setVerdicts((prev) =>
-        prev.map((v) => (v.id === verdictId ? { ...v, approved } : v)),
-      )
-      if (!sessionId || sessionId.startsWith('demo-')) return
-      void (async () => {
-        try {
-          const res = await fetch(`/api/session/${sessionId}/approval`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ verdictId, approved }),
-          })
-          if (!res.ok) throw new Error(`approval failed: ${res.status}`)
-          // When running without Supabase the route returns 200 with
-          // persisted: false (the session lives in an in-memory Map on a
-          // possibly-different instance). Keep the optimistic state, just
-          // surface a short advisory so the user knows it won't survive.
-          const payload = (await res.json().catch(() => null)) as
-            | { ok?: boolean; persisted?: boolean }
-            | null
-          if (payload && payload.persisted === false) {
-            setAdvisoryMsg('Approval recorded locally (Supabase not configured)')
-          }
-        } catch (err) {
-          // Roll back optimistic update on failure
-          setVerdicts((prev) =>
-            prev.map((v) => (v.id === verdictId ? { ...v, approved: null } : v)),
-          )
-          setErrorMsg(`Could not save approval: ${(err as Error).message}`)
-        }
-      })()
+  const handleApprove = useApproval({
+    sessionId,
+    approvalToken,
+    setVerdicts,
+    setErrorMsg,
+    setAdvisoryMsg,
+  })
+
+  const hasSession =
+    stage !== 'idle' || transcriptLines.length > 0 || verdicts.length > 0
+  const resumeMode = hasSession ? inputMode : null
+
+  const handleCardPick = useCallback(
+    (mode: InputMode) => {
+      const needsReset = mode !== inputMode
+      runCurtain(() => {
+        if (needsReset) reset()
+        setInputMode(mode)
+        setView('feature')
+        if (typeof window !== 'undefined') window.scrollTo(0, 0)
+      })
     },
-    [sessionId],
+    [inputMode, reset, runCurtain],
   )
+
+  const handleBack = useCallback(() => {
+    // stop any in-flight work, but keep all data so the user can resume
+    abortRef.current?.abort()
+    abortRef.current = null
+    if (demoAbortRef.current) demoAbortRef.current.aborted = true
+    demoAbortRef.current = null
+    if (running) setRunning(false)
+    runCurtain(() => {
+      setView('deck')
+      if (typeof window !== 'undefined') window.scrollTo(0, 0)
+    })
+  }, [running, runCurtain])
+
+  const handleHome = useCallback(() => {
+    transitionNavigate('/')
+  }, [transitionNavigate])
 
   const handleStreamEvent = useCallback((event: StreamEvent) => {
     switch (event.type) {
@@ -221,9 +237,24 @@ export function AppShell() {
           body: JSON.stringify({ inputMode }),
         })
         if (res.ok) {
-          const body = (await res.json()) as { sessionId?: string }
+          const body = (await res.json()) as {
+            sessionId?: string
+            approvalToken?: string
+          }
           currentSessionId = body.sessionId
           if (currentSessionId) setSessionId(currentSessionId)
+          if (body.approvalToken) setApprovalToken(body.approvalToken)
+        } else if (res.status === 429) {
+          const payload = (await res.json().catch(() => null)) as
+            | { retryAfterSeconds?: number; error?: string }
+            | null
+          setErrorMsg(
+            payload?.error ||
+              `Session creation rate-limited. Try again in ${payload?.retryAfterSeconds ?? 60}s.`,
+          )
+          setStage('error')
+          setRunning(false)
+          return
         }
       } catch {
         // continue without session; pipeline will make its own
@@ -252,8 +283,34 @@ export function AppShell() {
       }
 
       if (!response.ok || !response.body) {
-        const txt = await response.text().catch(() => '')
-        setErrorMsg(txt || `Pipeline error ${response.status}`)
+        // Attempt to parse a structured error body; fall back to text.
+        type ApiError = {
+          error?: string
+          code?: string
+          retryAfterSeconds?: number
+          hitWindow?: string
+        }
+        let parsed: ApiError | null = null
+        let raw = ''
+        try {
+          raw = await response.text()
+          parsed = raw ? (JSON.parse(raw) as ApiError) : null
+        } catch {
+          parsed = null
+        }
+        let message: string
+        if (response.status === 429) {
+          const retry = parsed?.retryAfterSeconds ?? 60
+          const win = parsed?.hitWindow ? ` (${parsed.hitWindow})` : ''
+          message = `Pipeline rate-limited${win}. Try again in ${retry}s.`
+        } else if (response.status === 400 && parsed?.error) {
+          message = `Bad input: ${parsed.error}`
+        } else if (parsed?.error) {
+          message = parsed.error
+        } else {
+          message = raw || `Pipeline error ${response.status}`
+        }
+        setErrorMsg(message)
         setStage('error')
         setRunning(false)
         return
@@ -310,8 +367,17 @@ export function AppShell() {
     [inputMode, runPipeline],
   )
 
+  if (view === 'deck') {
+    return (
+      <div className="page-enter">
+        <InputDeck onPick={handleCardPick} onHome={handleHome} resumeMode={resumeMode} />
+      </div>
+    )
+  }
+
   return (
     <div
+      className="page-enter"
       style={{
         background: 'var(--bg)',
         color: 'var(--text)',
@@ -323,9 +389,12 @@ export function AppShell() {
         stage={stage}
         sessionId={sessionId}
         running={running}
+        inputMode={inputMode}
         onRunDemo={runDemo}
         onReset={reset}
         onStop={handleStop}
+        onBack={handleBack}
+        onHome={handleHome}
       />
 
       <div style={{ padding: '28px 48px 80px', maxWidth: 1200, margin: '0 auto' }}>
@@ -363,7 +432,6 @@ export function AppShell() {
           <SectionLabel num="01" text="Input" />
           <InputSection
             inputMode={inputMode}
-            onModeChange={(m) => setInputMode(m)}
             onTranscript={onTranscript}
             stage={stage}
           />
@@ -403,8 +471,21 @@ export function AppShell() {
         {speakers.length > 0 && (
           <section id="speakers">
             <SectionLabel num="04" text="Speaker accuracy" />
-            <SpeakerScores speakers={speakers} />
-            <ExportButton sessionId={sessionId} />
+            <SpeakerScores speakers={speakers} verdicts={verdicts} />
+            {claims.length > 1 && (
+              <>
+                <SectionLabel num="05" text="Claim genealogy" />
+                <Genealogy claims={claims} verdicts={verdicts} />
+              </>
+            )}
+            <ExportButton
+              sessionId={sessionId}
+              transcriptLines={transcriptLines}
+              claims={claims}
+              verdicts={verdicts}
+              speakers={speakers}
+              inputMode={inputMode}
+            />
           </section>
         )}
       </div>
