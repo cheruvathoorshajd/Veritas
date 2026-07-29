@@ -4,12 +4,6 @@
 
 > End-to-end, zero-cost pipeline that transcribes conversations, extracts verifiable claims via multi-agent orchestration, verifies them against live web sources using open-domain Web RAG, and issues per-speaker evidence-backed verdicts with confidence scores.
 
-## Video Demo
-
-**▶ <https://www.youtube.com/watch?v=REPLACE_WITH_YOUR_VIDEO_ID>**
-
-A 2-minute walk-through covering: (1) landing → trifold deck input chooser, (2) submitting a transcript through the text channel, (3) live SSE streaming claims and verdicts, (4) per-speaker accuracy report, (5) exporting the HTML report. Recorded with OBS at 1080p.
-
 ## What this is
 
 Veritas takes a conversation — captured live through your mic, uploaded as a Word/PDF document, or pasted as raw text — and tells you what's actually true. It splits the conversation into individual factual claims, searches the live web for each one (Tavily + Wikipedia + PolitiFact in parallel), reasons over the evidence with an LLM, and issues per-speaker verdicts you can export to a shareable HTML report. Every component runs on free-tier APIs; the project's hard constraint was zero monthly infrastructure cost.
