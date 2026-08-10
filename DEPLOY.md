@@ -38,6 +38,7 @@ serverless functions**. It has no separate backend — the API routes under
 | Next.js app (`/`, `/app`) | Landing page + the fact-check product UI | Vercel (static + serverless) |
 | `app/api/pipeline` | SSE streaming fact-check pipeline (LangGraph state machine) | Vercel function, `maxDuration = 60` |
 | `app/api/transcribe` | `.docx` / `.pdf` upload + AssemblyAI audio | Vercel function, `maxDuration = 30` |
+| `app/api/cron/keepalive` | Scheduled Supabase keep-alive + provider smoke test | Vercel Cron, every 3 days |
 | Gemini / Groq | LLM (Groq is the automatic fallback on quota) | External API |
 | Tavily | Web search / evidence retrieval | External API |
 | AssemblyAI | Transcription + diarization | External API |
@@ -47,6 +48,12 @@ serverless functions**. It has no separate backend — the API routes under
 per-instance in-memory `Map` that does not survive serverless cold starts and is
 not shared across regions. The app degrades gracefully without it, but approvals
 won't persist. Set it up for a real deploy.
+
+**Why Upstash matters:** rate limiting falls back to a per-process in-memory
+limiter when `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are unset —
+that does not survive Vercel cold starts and does not protect across regions, so
+a public deploy is effectively unthrottled against paid LLM/search quotas. Set
+the Upstash pair for any public URL.
 
 ---
 
@@ -72,6 +79,7 @@ sufficient for a demo.
 | **Tavily** | https://app.tavily.com/home | 1,000 searches/month | **Yes** (retrieval) |
 | **AssemblyAI** | https://www.assemblyai.com/app/account | 100 hours | Yes for audio/file upload |
 | **Groq** | https://console.groq.com/keys | Generous, fast | Recommended (LLM fallback) |
+| **Upstash Redis** | https://console.upstash.com (Redis → REST) | 10k commands/day | Recommended (cross-instance rate limiting) |
 | **LangSmith** | https://smith.langchain.com/settings | Free | Optional (tracing) |
 
 Keep these somewhere safe — you'll paste them into `.env.local` (Phase A) and
@@ -186,6 +194,8 @@ When all five pass, **Veritas is live.** 🎉
 | `TAVILY_API_KEY` | **Yes** | No | Tavily (§3) |
 | `ASSEMBLYAI_API_KEY` | Yes for audio | No | AssemblyAI (§3) |
 | `GROQ_API_KEY` | Recommended | No | Groq (§3) — LLM fallback |
+| `UPSTASH_REDIS_REST_URL` | Recommended for public deploys | No | Upstash (§3) — rate limiting |
+| `UPSTASH_REDIS_REST_TOKEN` | Recommended for public deploys | No — **secret** | Upstash (§3) — rate limiting |
 | `NEXT_PUBLIC_SUPABASE_URL` | Recommended | **Yes** | Supabase (§5) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Recommended | **Yes** | Supabase (§5) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Recommended | No — **secret** | Supabase (§5) |
@@ -193,6 +203,7 @@ When all five pass, **Veritas is live.** 🎉
 | `LANGCHAIN_TRACING_V2` | Optional | No | set to `true` to enable tracing |
 | `LANGCHAIN_PROJECT` | Optional | No | e.g. `veritas` |
 | `NEXT_PUBLIC_APP_URL` | Recommended | **Yes** | your live URL (Phase D) |
+| `CRON_SECRET` | Optional | No — **secret** | any long random string; guards the keep-alive cron (§10) |
 
 > **Never commit real keys.** `.env` and `.env.local` are gitignored. Only
 > `.env.example` (placeholders) is tracked.
@@ -208,6 +219,23 @@ A GitHub Actions workflow (`.github/workflows/ci.yml`) also runs on every push
 and PR: **install → typecheck → lint → test (120 tests) → build**. To require it
 before merging: GitHub → **Settings → Branches → Add rule** → pattern `main` →
 require the `check` status check + require a PR before merging.
+
+### Keeping the free-tier Supabase awake
+
+`vercel.json` registers a **Vercel Cron** that calls `/api/cron/keepalive` every
+3 days (`0 6 */3 * *`). The endpoint runs a trivial Supabase query — which resets
+the free-tier idle timer so the project never auto-pauses after ~7 idle days —
+and, when it can reach `/api/health`, lightly exercises every provider key
+(Gemini, Tavily, AssemblyAI) so a broken key shows up in the logs before a
+visitor hits it. API keys and the Vercel deployment itself do not expire from
+inactivity, so Supabase is the only thing this needs to keep alive.
+
+Set a `CRON_SECRET` (any long random string) in Vercel to lock the endpoint
+down — Vercel automatically sends it as a Bearer token to its own cron calls, and
+the route rejects anything else with `401`. Watch runs under **Vercel → your
+project → Cron Jobs**. Note: the cron *prevents* future idle-pauses; it cannot
+wake a project that has *already* paused — restore that once from the Supabase
+dashboard.
 
 ---
 
@@ -229,6 +257,7 @@ require the `check` status check + require a PR before merging.
 | Approvals don't persist after refresh | Supabase not wired | Re-check the three `SUPABASE*` vars and that the schema ran (Phase B) |
 | Pipeline times out on long transcripts | Function duration | Already set to 60s via `vercel.json`; keep transcripts short for the demo |
 | Gemini quota errors | Free-tier rate limit | Set `GROQ_API_KEY` — the `ResilientLLM` wrapper falls back automatically |
+| Rate limiting not shared across instances | Upstash not wired | Set `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (Phase C); without them the limiter is per-process in-memory |
 | Audio upload fails | Missing `ASSEMBLYAI_API_KEY` | Add it, or use the text/demo paths which don't need it |
 | Wrong branch deployed | Production Branch not `main` | Vercel → Settings → Git → set Production Branch to `main` |
 

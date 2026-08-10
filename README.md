@@ -506,6 +506,7 @@ Create `.env.local` at the project root:
 | `LANGCHAIN_TRACING_V2`           | No                | Set to `true` to enable tracing            |
 | `LANGCHAIN_PROJECT`               | No                | Set to `veritas`                           |
 | `NEXT_PUBLIC_APP_URL`             | No                | App public URL                             |
+| `CRON_SECRET`                     | No                | Guards the scheduled keep-alive cron (see below) |
 
 **Demo mode works with zero environment variables.** Live pipeline requires at minimum `GOOGLE_GENERATIVE_AI_API_KEY` + `TAVILY_API_KEY`.
 
@@ -557,6 +558,12 @@ pnpm start
 3. Add the env vars listed in **Production caveats** above (at minimum the two pipeline keys).
 4. Deploy. The `maxDuration = 60` declaration in `app/api/pipeline/route.ts` opts the route into the longer execution budget; no further config is needed.
 5. If you want sessions / approval persistence across instances, run `lib/db/schema.sql` in your Supabase project and add the three Supabase env vars.
+
+### Keeping the free-tier Supabase awake
+
+`vercel.json` registers a **Vercel Cron** that calls `/api/cron/keepalive` every 3 days (`0 6 */3 * *`). The endpoint runs a trivial Supabase query, which resets the free-tier idle timer so the project never auto-pauses after ~7 idle days; when it can reach `/api/health` it also lightly exercises every provider key (Gemini, Tavily, AssemblyAI) so a broken key surfaces in the logs before a visitor hits it. API keys and the Vercel deployment itself do not expire from inactivity, so Supabase is the only thing this keeps alive.
+
+Set a `CRON_SECRET` (any long random string) in Vercel to lock the endpoint down — Vercel automatically sends it as a Bearer token to its own cron calls, and the route rejects anything else with `401`. Runs are visible under **Vercel → your project → Cron Jobs**.
 
 ---
 
