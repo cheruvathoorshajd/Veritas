@@ -6,5 +6,11 @@
     "app/api/transcribe/route.ts": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/keepalive",
+      "schedule": "0 6 */3 * *"
+    }
+  ]
 }
