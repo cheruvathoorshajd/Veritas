@@ -3,7 +3,7 @@ import type { SearchResult } from '@/lib/types'
 import { logger } from '@/lib/utils/logger'
 
 const log = logger('politifact')
-const FEED_URL = 'https://www.politifact.com/rss/rulings/'
+const FEED_URL = 'https://www.politifact.com/rss/factchecks/'
 const CACHE_TTL_MS = 15 * 60 * 1000
 
 interface CachedFeed {
